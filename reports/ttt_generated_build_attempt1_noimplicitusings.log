@@ -1,0 +1,22 @@
+  Determining projects to restore...
+  Restored /home/user/work/ttt_build/TttBuild.csproj (in 500 ms).
+  1 of 2 projects are up-to-date for restore.
+  RecompOne.Runtime -> /home/user/work/recompone/RecompOne.Runtime/bin/Release/net10.0/RecompOne.Runtime.dll
+/home/user/test/generated/recomp/main.cs(3492977,12): error CS0246: The type or namespace name 'IReadOnlyDictionary<,>' could not be found (are you missing a using directive or an assembly reference?) [/home/user/work/ttt_build/TttBuild.csproj]
+/home/user/test/generated/recomp/main.cs(3492977,38): error CS0246: The type or namespace name 'Action<,>' could not be found (are you missing a using directive or an assembly reference?) [/home/user/work/ttt_build/TttBuild.csproj]
+/home/user/test/generated/recomp/main.cs(3492971,41): error CS0738: 'MainDispatchTable' does not implement interface member 'IOverlay.Functions'. 'MainDispatchTable.Functions' cannot implement 'IOverlay.Functions' because it does not have the matching return type of 'IReadOnlyDictionary<uint, Action<CpuContext, IMemory>>'. [/home/user/work/ttt_build/TttBuild.csproj]
+
+Build FAILED.
+
+/home/user/test/generated/recomp/main.cs(3492977,12): error CS0246: The type or namespace name 'IReadOnlyDictionary<,>' could not be found (are you missing a using directive or an assembly reference?) [/home/user/work/ttt_build/TttBuild.csproj]
+/home/user/test/generated/recomp/main.cs(3492977,38): error CS0246: The type or namespace name 'Action<,>' could not be found (are you missing a using directive or an assembly reference?) [/home/user/work/ttt_build/TttBuild.csproj]
+/home/user/test/generated/recomp/main.cs(3492971,41): error CS0738: 'MainDispatchTable' does not implement interface member 'IOverlay.Functions'. 'MainDispatchTable.Functions' cannot implement 'IOverlay.Functions' because it does not have the matching return type of 'IReadOnlyDictionary<uint, Action<CpuContext, IMemory>>'. [/home/user/work/ttt_build/TttBuild.csproj]
+    0 Warning(s)
+    3 Error(s)
+
+Time Elapsed 00:01:14.76
+
+real	1m15.092s
+user	1m3.219s
+sys	0m16.814s
+dotnet exit=1

@@ -51,6 +51,11 @@
     "config": "tools/ttt_raw.json",
     "run": "reports/recomp_raw_run1.log",
     "result": "RAN: 3418 functions, 80 jump tables (7684 entries), main.cs 206 MB. NOT validated: coverage unknown; some functions huge (up to ~4 MB of C#) because the detector extends through data; PS1 SdkPatches deliberately skipped; PS1 Entry.cs deliberately not emitted",
-    "compile_check": "running/see reports/ttt_generated_build.log"
-  }
+    "compile_check": "FAIL: dotnet build of generated main.cs (206 MB) ran 9m15s and aborted with System.OutOfMemoryException inside Roslyn (binding the largest functions); 0 CSxxxx semantic errors after adding ImplicitUsings. Attempt 1 (without ImplicitUsings) had 3 CS errors, a flaw of my test project, not of the generated code. Logs: reports/ttt_generated_build*.log"
+  },
+  "next_blockers": [
+    "function detector must stop at jumps/returns followed by data (huge functions, 761k [Unknown] words)",
+    "coverage check against MAME-executed PCs",
+    "System 12 runtime: memory map, banked ROM + DMA + protection (0x1f700000/0x1fb00000/0x1fb80000), MMIO, GPU/GTE reuse, H8/3002 + C352 sound, JVS/coin/EEPROM"
+  ]
 }
