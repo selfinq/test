@@ -2,7 +2,8 @@
   "pins": {
     "recompone": "8d0091cf4877b27c2d526106a78c75f6b0ef97b2",
     "mame_reference_source": "f8f6b22c3f328b9e0b04ff502989f8536c0d66c0",
-    "dotnet_sdk": "10.0.112 (Ubuntu apt, dotnet-sdk-10.0)"
+    "dotnet_sdk": "10.0.112 (Ubuntu apt, dotnet-sdk-10.0)",
+    "mame_binary": "0.264 (Ubuntu apt 0.264+dfsg.1-1), used for reference outputs"
   },
   "phase1_audit": "PASS: base tool built (0 errors, 2 pre-existing warnings); see reports/PHASE1_AUDIT.md",
   "milestones": {
@@ -36,8 +37,9 @@
     }
   },
   "not_run": [
-    "mame -listxml/-listroms/-verifyroms tektagt (MAME not installed; apt offers 0.264, which must be compared against the pinned source commit)",
     "any recompilation",
-    "any differential test"
-  ]
+    "any differential test",
+    "mame -verifyroms with real ROMs (ran with empty rompath: rc=2, 'romset tektagt not found')"
+  ],
+  "phase2_mame": "PASS (partial): -listxml rc=0, -listroms rc=0; manifest identical to MAME 0.264 listroms (15/15). See reports/mame_ref/"
 }

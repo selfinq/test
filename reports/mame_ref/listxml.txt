@@ -1,0 +1,358 @@
+<?xml version="1.0"?>
+<!DOCTYPE mame [
+<!ELEMENT mame (machine+)>
+	<!ATTLIST mame build CDATA #IMPLIED>
+	<!ATTLIST mame debug (yes|no) "no">
+	<!ATTLIST mame mameconfig CDATA #REQUIRED>
+	<!ELEMENT machine (description, year?, manufacturer?, biosset*, rom*, disk*, device_ref*, sample*, chip*, display*, sound?, input?, dipswitch*, configuration*, port*, adjuster*, driver?, feature*, device*, slot*, softwarelist*, ramoption*)>
+		<!ATTLIST machine name CDATA #REQUIRED>
+		<!ATTLIST machine sourcefile CDATA #IMPLIED>
+		<!ATTLIST machine isbios (yes|no) "no">
+		<!ATTLIST machine isdevice (yes|no) "no">
+		<!ATTLIST machine ismechanical (yes|no) "no">
+		<!ATTLIST machine runnable (yes|no) "yes">
+		<!ATTLIST machine cloneof CDATA #IMPLIED>
+		<!ATTLIST machine romof CDATA #IMPLIED>
+		<!ATTLIST machine sampleof CDATA #IMPLIED>
+		<!ELEMENT description (#PCDATA)>
+		<!ELEMENT year (#PCDATA)>
+		<!ELEMENT manufacturer (#PCDATA)>
+		<!ELEMENT biosset EMPTY>
+			<!ATTLIST biosset name CDATA #REQUIRED>
+			<!ATTLIST biosset description CDATA #REQUIRED>
+			<!ATTLIST biosset default (yes|no) "no">
+		<!ELEMENT rom EMPTY>
+			<!ATTLIST rom name CDATA #REQUIRED>
+			<!ATTLIST rom bios CDATA #IMPLIED>
+			<!ATTLIST rom size CDATA #REQUIRED>
+			<!ATTLIST rom crc CDATA #IMPLIED>
+			<!ATTLIST rom sha1 CDATA #IMPLIED>
+			<!ATTLIST rom merge CDATA #IMPLIED>
+			<!ATTLIST rom region CDATA #IMPLIED>
+			<!ATTLIST rom offset CDATA #IMPLIED>
+			<!ATTLIST rom status (baddump|nodump|good) "good">
+			<!ATTLIST rom optional (yes|no) "no">
+		<!ELEMENT disk EMPTY>
+			<!ATTLIST disk name CDATA #REQUIRED>
+			<!ATTLIST disk sha1 CDATA #IMPLIED>
+			<!ATTLIST disk merge CDATA #IMPLIED>
+			<!ATTLIST disk region CDATA #IMPLIED>
+			<!ATTLIST disk index CDATA #IMPLIED>
+			<!ATTLIST disk writable (yes|no) "no">
+			<!ATTLIST disk status (baddump|nodump|good) "good">
+			<!ATTLIST disk optional (yes|no) "no">
+		<!ELEMENT device_ref EMPTY>
+			<!ATTLIST device_ref name CDATA #REQUIRED>
+		<!ELEMENT sample EMPTY>
+			<!ATTLIST sample name CDATA #REQUIRED>
+		<!ELEMENT chip EMPTY>
+			<!ATTLIST chip name CDATA #REQUIRED>
+			<!ATTLIST chip tag CDATA #IMPLIED>
+			<!ATTLIST chip type (cpu|audio) #REQUIRED>
+			<!ATTLIST chip clock CDATA #IMPLIED>
+		<!ELEMENT display EMPTY>
+			<!ATTLIST display tag CDATA #IMPLIED>
+			<!ATTLIST display type (raster|vector|lcd|svg|unknown) #REQUIRED>
+			<!ATTLIST display rotate (0|90|180|270) #IMPLIED>
+			<!ATTLIST display flipx (yes|no) "no">
+			<!ATTLIST display width CDATA #IMPLIED>
+			<!ATTLIST display height CDATA #IMPLIED>
+			<!ATTLIST display refresh CDATA #REQUIRED>
+			<!ATTLIST display pixclock CDATA #IMPLIED>
+			<!ATTLIST display htotal CDATA #IMPLIED>
+			<!ATTLIST display hbend CDATA #IMPLIED>
+			<!ATTLIST display hbstart CDATA #IMPLIED>
+			<!ATTLIST display vtotal CDATA #IMPLIED>
+			<!ATTLIST display vbend CDATA #IMPLIED>
+			<!ATTLIST display vbstart CDATA #IMPLIED>
+		<!ELEMENT sound EMPTY>
+			<!ATTLIST sound channels CDATA #REQUIRED>
+		<!ELEMENT condition EMPTY>
+			<!ATTLIST condition tag CDATA #REQUIRED>
+			<!ATTLIST condition mask CDATA #REQUIRED>
+			<!ATTLIST condition relation (eq|ne|gt|le|lt|ge) #REQUIRED>
+			<!ATTLIST condition value CDATA #REQUIRED>
+		<!ELEMENT input (control*)>
+			<!ATTLIST input service (yes|no) "no">
+			<!ATTLIST input tilt (yes|no) "no">
+			<!ATTLIST input players CDATA #REQUIRED>
+			<!ATTLIST input coins CDATA #IMPLIED>
+			<!ELEMENT control EMPTY>
+				<!ATTLIST control type CDATA #REQUIRED>
+				<!ATTLIST control player CDATA #IMPLIED>
+				<!ATTLIST control buttons CDATA #IMPLIED>
+				<!ATTLIST control reqbuttons CDATA #IMPLIED>
+				<!ATTLIST control minimum CDATA #IMPLIED>
+				<!ATTLIST control maximum CDATA #IMPLIED>
+				<!ATTLIST control sensitivity CDATA #IMPLIED>
+				<!ATTLIST control keydelta CDATA #IMPLIED>
+				<!ATTLIST control reverse (yes|no) "no">
+				<!ATTLIST control ways CDATA #IMPLIED>
+				<!ATTLIST control ways2 CDATA #IMPLIED>
+				<!ATTLIST control ways3 CDATA #IMPLIED>
+		<!ELEMENT dipswitch (condition?, diplocation*, dipvalue*)>
+			<!ATTLIST dipswitch name CDATA #REQUIRED>
+			<!ATTLIST dipswitch tag CDATA #REQUIRED>
+			<!ATTLIST dipswitch mask CDATA #REQUIRED>
+			<!ELEMENT diplocation EMPTY>
+				<!ATTLIST diplocation name CDATA #REQUIRED>
+				<!ATTLIST diplocation number CDATA #REQUIRED>
+				<!ATTLIST diplocation inverted (yes|no) "no">
+			<!ELEMENT dipvalue (condition?)>
+				<!ATTLIST dipvalue name CDATA #REQUIRED>
+				<!ATTLIST dipvalue value CDATA #REQUIRED>
+				<!ATTLIST dipvalue default (yes|no) "no">
+		<!ELEMENT configuration (condition?, conflocation*, confsetting*)>
+			<!ATTLIST configuration name CDATA #REQUIRED>
+			<!ATTLIST configuration tag CDATA #REQUIRED>
+			<!ATTLIST configuration mask CDATA #REQUIRED>
+			<!ELEMENT conflocation EMPTY>
+				<!ATTLIST conflocation name CDATA #REQUIRED>
+				<!ATTLIST conflocation number CDATA #REQUIRED>
+				<!ATTLIST conflocation inverted (yes|no) "no">
+			<!ELEMENT confsetting (condition?)>
+				<!ATTLIST confsetting name CDATA #REQUIRED>
+				<!ATTLIST confsetting value CDATA #REQUIRED>
+				<!ATTLIST confsetting default (yes|no) "no">
+		<!ELEMENT port (analog*)>
+			<!ATTLIST port tag CDATA #REQUIRED>
+			<!ELEMENT analog EMPTY>
+				<!ATTLIST analog mask CDATA #REQUIRED>
+		<!ELEMENT adjuster (condition?)>
+			<!ATTLIST adjuster name CDATA #REQUIRED>
+			<!ATTLIST adjuster default CDATA #REQUIRED>
+		<!ELEMENT driver EMPTY>
+			<!ATTLIST driver status (good|imperfect|preliminary) #REQUIRED>
+			<!ATTLIST driver emulation (good|imperfect|preliminary) #REQUIRED>
+			<!ATTLIST driver cocktail (good|imperfect|preliminary) #IMPLIED>
+			<!ATTLIST driver savestate (supported|unsupported) #REQUIRED>
+			<!ATTLIST driver requiresartwork (yes|no) "no">
+			<!ATTLIST driver unofficial (yes|no) "no">
+			<!ATTLIST driver nosoundhardware (yes|no) "no">
+			<!ATTLIST driver incomplete (yes|no) "no">
+		<!ELEMENT feature EMPTY>
+			<!ATTLIST feature type (protection|timing|graphics|palette|sound|capture|camera|microphone|controls|keyboard|mouse|media|disk|printer|tape|punch|drum|rom|comms|lan|wan) #REQUIRED>
+			<!ATTLIST feature status (unemulated|imperfect) #IMPLIED>
+			<!ATTLIST feature overall (unemulated|imperfect) #IMPLIED>
+		<!ELEMENT device (instance?, extension*)>
+			<!ATTLIST device type CDATA #REQUIRED>
+			<!ATTLIST device tag CDATA #IMPLIED>
+			<!ATTLIST device fixed_image CDATA #IMPLIED>
+			<!ATTLIST device mandatory CDATA #IMPLIED>
+			<!ATTLIST device interface CDATA #IMPLIED>
+			<!ELEMENT instance EMPTY>
+				<!ATTLIST instance name CDATA #REQUIRED>
+				<!ATTLIST instance briefname CDATA #REQUIRED>
+			<!ELEMENT extension EMPTY>
+				<!ATTLIST extension name CDATA #REQUIRED>
+		<!ELEMENT slot (slotoption*)>
+			<!ATTLIST slot name CDATA #REQUIRED>
+			<!ELEMENT slotoption EMPTY>
+				<!ATTLIST slotoption name CDATA #REQUIRED>
+				<!ATTLIST slotoption devname CDATA #REQUIRED>
+				<!ATTLIST slotoption default (yes|no) "no">
+		<!ELEMENT softwarelist EMPTY>
+			<!ATTLIST softwarelist tag CDATA #REQUIRED>
+			<!ATTLIST softwarelist name CDATA #REQUIRED>
+			<!ATTLIST softwarelist status (original|compatible) #REQUIRED>
+			<!ATTLIST softwarelist filter CDATA #IMPLIED>
+		<!ELEMENT ramoption (#PCDATA)>
+			<!ATTLIST ramoption name CDATA #REQUIRED>
+			<!ATTLIST ramoption default CDATA #IMPLIED>
+]>
+
+<mame build="0.264 (unknown)" debug="no" mameconfig="10">
+	<machine name="tektagt" sourcefile="namco/namcos12.cpp">
+		<description>Tekken Tag Tournament (World, TEG2/VER.C1, set 1)</description>
+		<year>1999</year>
+		<manufacturer>Namco</manufacturer>
+		<rom name="teg2verc1.2e" size="2097152" crc="c6da0717" sha1="9e01ae64710d85eb9899d6fa6fd0a2152aee8c11" region="maincpu:rom" offset="0"/>
+		<rom name="teg2verc1.2j" size="2097152" crc="25a1d2ff" sha1="529a11a1bbb8655534d7ec371f1c09e9e387ed11" region="maincpu:rom" offset="1"/>
+		<rom name="teg1_rom0e.ic9" size="8388608" crc="c962a373" sha1="d662dbd89ef62c5ac3150a018fc2d35ef2ee94ac" region="bankedroms" offset="0"/>
+		<rom name="teg1_rom0o.ic13" size="8388608" crc="badb7dcf" sha1="8c0bf7f6351c5a2a0996df371a901cf90c68cd8c" region="bankedroms" offset="2"/>
+		<rom name="teg1_rom1e.ic10" size="8388608" crc="b3d56124" sha1="4df20c74ba63f7362caf15e9b8949fab655704fb" region="bankedroms" offset="1000000"/>
+		<rom name="teg1_rom1o.ic14" size="8388608" crc="2434ceb6" sha1="f19f1599acbd6fd48793a2ee5a500ca817d9df56" region="bankedroms" offset="1000002"/>
+		<rom name="teg1_rom2e.ic11" size="8388608" crc="6e5c3428" sha1="e3cdb60a4445406877b2e273385f34bfb0974220" region="bankedroms" offset="2000000"/>
+		<rom name="teg1_rom2o.ic15" size="8388608" crc="21ce9dfa" sha1="f27e8210ee236c327aa3e1ce4dd408abc6580a1b" region="bankedroms" offset="2000002"/>
+		<rom name="flel.ic4" size="2097152" crc="88b3823c" sha1="6f31acb642c57daccbfdb87b790037e261c8c73c" region="bankedroms" offset="3000000"/>
+		<rom name="fleu.ic5" size="2097152" crc="36df0867" sha1="6bec8560ad4c122dc909daa83aa9089ba5b281f7" region="bankedroms" offset="3000001"/>
+		<rom name="flol.ic6" size="2097152" crc="03a76765" sha1="ae35ae28375f2a3e52d72b77ec09750c326cc269" region="bankedroms" offset="3000002"/>
+		<rom name="flou.ic7" size="2097152" crc="6d6947d1" sha1="2f307bc4070fadb510c0473bc91d917b2d845ca5" region="bankedroms" offset="3000003"/>
+		<rom name="teg1.11s" size="524288" crc="67d0c469" sha1="da164702fc21b9f46a9e32c89e7b1d36070ddf79" region="sub" offset="0"/>
+		<rom name="teg1_wave0.ic1" size="8388608" crc="4bd99104" sha1="f76b0576cc28fe49d3c1c402988b933933e52e15" region="c352" offset="0"/>
+		<rom name="teg1_wave1.ic12" size="8388608" crc="dbc74fff" sha1="601b7e7361ea744b34e3fa1fc39d88641de7f4c6" region="c352" offset="800000"/>
+		<device_ref name="h83002"/>
+		<device_ref name="h8h_intc"/>
+		<device_ref name="h8_adc_3337"/>
+		<device_ref name="h8h_dma"/>
+		<device_ref name="h8h_dma_channel"/>
+		<device_ref name="h8h_dma_channel"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_timer16"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8_sci"/>
+		<device_ref name="h8_sci"/>
+		<device_ref name="h8_watchdog"/>
+		<device_ref name="namco_settings"/>
+		<device_ref name="rtc4543"/>
+		<device_ref name="at28c16"/>
+		<device_ref name="speaker"/>
+		<device_ref name="speaker"/>
+		<device_ref name="c352"/>
+		<device_ref name="cxd8661r"/>
+		<device_ref name="psxirq"/>
+		<device_ref name="psxdma"/>
+		<device_ref name="psxmdec"/>
+		<device_ref name="psxrcnt"/>
+		<device_ref name="psxsio0"/>
+		<device_ref name="psxsio1"/>
+		<device_ref name="ram"/>
+		<device_ref name="cxd8654q"/>
+		<device_ref name="screen"/>
+		<chip type="cpu" tag="sub" name="Hitachi H8/3002" clock="16934400"/>
+		<chip type="cpu" tag="maincpu" name="Sony CXD8661R" clock="100000000"/>
+		<chip type="audio" tag="lspeaker" name="Speaker"/>
+		<chip type="audio" tag="rspeaker" name="Speaker"/>
+		<chip type="audio" tag="c352" name="Namco C352" clock="25401600"/>
+		<display tag="screen" type="raster" rotate="0" width="640" height="480" refresh="60.000000" />
+		<sound channels="2"/>
+		<input players="2" coins="2" service="yes">
+			<control type="joy" player="1" buttons="6" ways="8"/>
+			<control type="joy" player="2" buttons="6" ways="8"/>
+		</input>
+		<dipswitch name="Freeze" tag="DSW" mask="64">
+			<diplocation name="DIP SW2" number="2"/>
+			<dipvalue name="Off" value="64" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<dipswitch name="Service Mode" tag="DSW" mask="128">
+			<diplocation name="DIP SW2" number="1"/>
+			<dipvalue name="Off" value="128" default="yes"/>
+			<dipvalue name="On" value="0"/>
+		</dipswitch>
+		<port tag=":DSW">
+		</port>
+		<port tag=":IN0">
+		</port>
+		<port tag=":IN1">
+		</port>
+		<driver status="imperfect" emulation="good" savestate="unsupported"/>
+		<feature type="graphics" overall="imperfect"/>
+	</machine>
+	<machine name="at28c16" sourcefile="devices/machine/at28c16.cpp" isdevice="yes" runnable="no">
+		<description>AT28C16 2Kx8 EEPROM</description>
+	</machine>
+	<machine name="c352" sourcefile="devices/sound/c352.cpp" isdevice="yes" runnable="no">
+		<description>Namco C352</description>
+		<sound channels="0"/>
+	</machine>
+	<machine name="cxd8654q" sourcefile="devices/video/psx.cpp" isdevice="yes" runnable="no">
+		<description>CXD8654Q GPU</description>
+		<feature type="graphics" status="imperfect"/>
+	</machine>
+	<machine name="cxd8661r" sourcefile="devices/cpu/psx/psx.cpp" isdevice="yes" runnable="no">
+		<description>Sony CXD8661R</description>
+		<device_ref name="psxirq"/>
+		<device_ref name="psxdma"/>
+		<device_ref name="psxmdec"/>
+		<device_ref name="psxrcnt"/>
+		<device_ref name="psxsio0"/>
+		<device_ref name="psxsio1"/>
+		<device_ref name="ram"/>
+	</machine>
+	<machine name="h83002" sourcefile="devices/cpu/h8/h83002.cpp" isdevice="yes" runnable="no">
+		<description>Hitachi H8/3002</description>
+		<device_ref name="h8h_intc"/>
+		<device_ref name="h8_adc_3337"/>
+		<device_ref name="h8h_dma"/>
+		<device_ref name="h8h_dma_channel"/>
+		<device_ref name="h8h_dma_channel"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_digital_port"/>
+		<device_ref name="h8_timer16"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8h_timer16_channel"/>
+		<device_ref name="h8_sci"/>
+		<device_ref name="h8_sci"/>
+		<device_ref name="h8_watchdog"/>
+	</machine>
+	<machine name="h8_adc_3337" sourcefile="devices/cpu/h8/h8_adc.cpp" isdevice="yes" runnable="no">
+		<description>H8/3337 ADC</description>
+	</machine>
+	<machine name="h8_digital_port" sourcefile="devices/cpu/h8/h8_port.cpp" isdevice="yes" runnable="no">
+		<description>H8 digital port</description>
+	</machine>
+	<machine name="h8_sci" sourcefile="devices/cpu/h8/h8_sci.cpp" isdevice="yes" runnable="no">
+		<description>H8 Serial Communications Interface</description>
+	</machine>
+	<machine name="h8_timer16" sourcefile="devices/cpu/h8/h8_timer16.cpp" isdevice="yes" runnable="no">
+		<description>H8 16-bit timer</description>
+	</machine>
+	<machine name="h8_watchdog" sourcefile="devices/cpu/h8/h8_watchdog.cpp" isdevice="yes" runnable="no">
+		<description>H8 watchdog</description>
+	</machine>
+	<machine name="h8h_dma" sourcefile="devices/cpu/h8/h8_dma.cpp" isdevice="yes" runnable="no">
+		<description>H8H DMA controller</description>
+	</machine>
+	<machine name="h8h_dma_channel" sourcefile="devices/cpu/h8/h8_dma.cpp" isdevice="yes" runnable="no">
+		<description>H8H DMA channel</description>
+	</machine>
+	<machine name="h8h_intc" sourcefile="devices/cpu/h8/h8_intc.cpp" isdevice="yes" runnable="no">
+		<description>H8H interrupt controller</description>
+	</machine>
+	<machine name="h8h_timer16_channel" sourcefile="devices/cpu/h8/h8_timer16.cpp" isdevice="yes" runnable="no">
+		<description>H8H 16-bit timer channel</description>
+	</machine>
+	<machine name="namco_settings" sourcefile="namco/namco_settings.cpp" isdevice="yes" runnable="no">
+		<description>Namco Settings</description>
+	</machine>
+	<machine name="psxdma" sourcefile="devices/cpu/psx/dma.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX DMA</description>
+	</machine>
+	<machine name="psxirq" sourcefile="devices/cpu/psx/irq.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX IRQ</description>
+	</machine>
+	<machine name="psxmdec" sourcefile="devices/cpu/psx/mdec.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX MDEC</description>
+	</machine>
+	<machine name="psxrcnt" sourcefile="devices/cpu/psx/rcnt.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX RCNT</description>
+	</machine>
+	<machine name="psxsio0" sourcefile="devices/cpu/psx/sio.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX SIO-0</description>
+	</machine>
+	<machine name="psxsio1" sourcefile="devices/cpu/psx/sio.cpp" isdevice="yes" runnable="no">
+		<description>Sony PSX SIO-1</description>
+	</machine>
+	<machine name="ram" sourcefile="devices/machine/ram.cpp" isdevice="yes" runnable="no">
+		<description>RAM</description>
+	</machine>
+	<machine name="rtc4543" sourcefile="devices/machine/rtc4543.cpp" isdevice="yes" runnable="no">
+		<description>Epson R4543 RTC</description>
+	</machine>
+	<machine name="screen" sourcefile="emu/screen.cpp" isdevice="yes" runnable="no">
+		<description>Video Screen</description>
+	</machine>
+	<machine name="speaker" sourcefile="emu/speaker.cpp" isdevice="yes" runnable="no">
+		<description>Speaker</description>
+		<sound channels="1"/>
+	</machine>
+</mame>

@@ -1,0 +1,3 @@
+listxml rc=0
+listroms rc=0
+verifyroms rc=2

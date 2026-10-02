@@ -19,3 +19,8 @@ Windows x64 output not testable here (Linux container); only the build itself wa
 - The runtime ships PS1 BIOS HLE (Bios/); arcade boot code reads the ROM instead. Whether it can be reused is undecided.
 ## Unverified
 Boot flow, entry address, byte order and bank mapping must come from the driver plus analysis of the real binaries; none is assumed here.
+
+## MAME reference (0.264, apt)
+`-listxml tektagt` / `-listroms tektagt` / `-verifyroms` outputs and return codes are in reports/mame_ref/ (rc 0/0/2; the 2 is the expected 'romset not found' with an empty rompath).
+-listroms matches tools/tektagt_manifest.json exactly (15/15 size+CRC+SHA-1), so 0.264 and the pinned master source agree for this set.
+Devices per -listxml: main CPU Sony CXD8661R @100 MHz, sound CPU Hitachi H8/3002 @16.9344 MHz, Namco C352 @25.4016 MHz.
