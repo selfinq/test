@@ -1,0 +1,304 @@
+// SoundTool: verification/diagnostic harness for the System 12 sound subsystem (NOT part of the runtime build; stored as .txt
+// so that a glob over *.cs in the runtime project never compiles it). To use: copy Program.cs.txt to Program.cs and
+// SoundTool.csproj.txt to SoundTool.csproj in an empty folder, adjust the <Compile Include> path to the Sound/*.cs files, `dotnet run -c Release -- <mode> ...`.
+//
+// Modes (see docs/system12/SOUND.md "Verification" for how each result was produced):
+//   selftest                                  run SoundSelfTests.RunAll
+//   fwreg <sub.bin> <c352.bin>                run SoundSelfTests.RunFirmwareRegression (needs the user's ROM regions)
+//   disdiff <sub.bin> <uniq.tsv>              compare the C# disassembler with MAME's text for a list of executed PCs (tools/uniq_trace.py output)
+//   dasmsweep <sub.bin> <mame_dasm.txt>       compare against a MAME `dasm` linear-sweep listing of the whole ROM
+//   replay <sub.bin> <win_N.txt> [maxLines] [ram_N.bin]
+//                                             oracle replay: feed MAME-traced pre-instruction states (tools/mame_*window_trace.lua)
+//                                             to the C# CPU one instruction at a time and compare registers/CCR/PC and cycle cost
+//   mixcmp <c352.bin> <c352_writes.txt> <mame.wav> [shift] [maxFrames]
+//                                             drive the C# C352 with the C352 register-write log captured from MAME and compare with MAME's wav.
+//                                             Bit-exact configuration: shift=2, env MAMEOUT=1 (apply MAME's float->int16 output stage), EPS=-1e-3 (write-time rounding)
+//   board <sub.bin> <c352.bin> <seconds> <out.txt>
+//                                             boot the emulated board alone (internal vblank) and log C352 writes (env QUIRK=1: MAME ICR quirk)
+//   full <sub.bin> <c352.bin> <shared_writes.txt> <frames.txt> <seconds> <outdir>
+//                                             board driven by MAME's vblank times and main-CPU shared-RAM writes; writes c352_writes_mine.txt, mine.pcm
+//                                             (env: QUIRK, INTERNAL, WIN0/WIN1 window trace, COV coverage, NOHOOK, QUANT)
+//   pcmcmp <mine.pcm> <mame.wav> [lag]        compare rendered PCM with MAME's wav after MAME's float->int16 output stage
+using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System12.Runtime.Sound;
+
+static class P {
+  static int Main(string[] a) {
+    if (a.Length == 0) { Console.WriteLine("usage"); return 2; }
+    switch (a[0]) {
+      case "disdiff": return DisDiff(a[1], a[2]);
+      case "dasmsweep": return DasmSweep(a[1], a[2]);
+      case "mixcmp": return MixCmp(a[1], a[2], a[3], a.Length>4?int.Parse(a[4]):0, a.Length>5?long.Parse(a[5]):long.MaxValue);
+      case "board": return Board(a[1], a[2], double.Parse(a[3], CultureInfo.InvariantCulture), a[4]);
+      case "full": return Full(a[1], a[2], a[3], a[4], double.Parse(a[5], CultureInfo.InvariantCulture), a[6]);
+      case "pcmcmp": return PcmCmp(a[1], a[2], a.Length>3?int.Parse(a[3]):2);
+      case "selftest": { int f = SoundSelfTests.RunAll(Console.WriteLine); return f; }
+      case "fwreg": { int f = SoundSelfTests.RunFirmwareRegression(File.ReadAllBytes(a[1]), File.ReadAllBytes(a[2]), Console.WriteLine); return f; }
+      case "stub": return Stub(a[1], long.Parse(a[2]));
+      case "replay": return Replay(a[1], a[2], a.Length>3?long.Parse(a[3]):long.MaxValue, a.Length>4?a[4]:null);
+    }
+    return 2;
+  }
+  static int DisDiff(string subbin, string tsv) {
+    var rom = File.ReadAllBytes(subbin);
+    int ok=0, bad=0; var badSet = new Dictionary<string,int>();
+    foreach (var line in File.ReadLines(tsv)) {
+      var p = line.Split('\t'); uint pc = Convert.ToUInt32(p[0],16); string exp = p[2];
+      var buf = new byte[16]; for (int i=0;i<16;i++) if (pc+i<rom.Length) buf[i]=rom[pc+i];
+      var insn = H8Decoder.Decode(buf, pc);
+      string got = H8Decoder.Disassemble(insn, pc);
+      string norm(string s)=>Regex.Replace(s.Trim(), @"\s+", " ");
+      if (norm(got)==norm(exp)) ok++; else { bad++; string key = norm(exp)+"  <>  "+norm(got); if(!badSet.ContainsKey(key)) badSet[key]=0; badSet[key]++; if (badSet.Count<=60 && badSet[key]==1) Console.WriteLine($"{pc:x6}: exp [{norm(exp)}] got [{norm(got)}] len={insn.Len}"); }
+    }
+    Console.WriteLine($"ok={ok} bad={bad}");
+    return bad==0?0:1;
+  }
+
+  class StubBus : IH8Bus {
+    public void Tick() {}
+    public byte[] rom; public byte[] mem = new byte[1<<24];
+    public SortedDictionary<uint,(int r,int w)> hist = new();
+    void H(uint a,bool w){ if (a>=0xfff000||(a>=0x280000&&a<0x300100)) { hist.TryGetValue(a,out var v); if(w)v.w++;else v.r++; hist[a]=v; } }
+    public byte Read8(uint a){ H(a,false); if(a<rom.Length) return rom[a]; return mem[a]; }
+    public ushort Read16(uint a){ H(a,false); H(a+1,false); if(a<rom.Length) return (ushort)((rom[a]<<8)|rom[a+1]); return (ushort)((mem[a]<<8)|mem[a+1]); }
+    public void Write8(uint a, byte v){ H(a,true); if(a>=rom.Length) mem[a]=v; }
+    public void Write16(uint a, ushort v){ H(a,true); H(a+1,true); if(a>=rom.Length){mem[a]=(byte)(v>>8);mem[a+1]=(byte)v;} }
+  }
+  static int Stub(string subbin, long n) {
+    var rom = File.ReadAllBytes(subbin);
+    var bus = new StubBus{rom=rom};
+    var cpu = new H8Cpu(bus, rom);
+    cpu.Reset();
+    for (long k=0;k<n && !cpu.Halted;k++) cpu.Step();
+    Console.WriteLine($"pc={cpu.PC:x6} halted={cpu.Halted} insns={cpu.Instructions} illegal@{cpu.LastIllegalPc:x6} bytes={BitConverter.ToString(cpu.LastIllegalBytes)}");
+    foreach (var kv in bus.hist) Console.WriteLine($"{kv.Key:x6} r={kv.Value.r} w={kv.Value.w}");
+    return 0;
+  }
+
+  class ReplayBus : IH8Bus {
+    public void Tick() {}
+    public byte[] rom; public byte[] mem = new byte[1<<24]; public bool io; public bool sharedRead;
+    bool IsIo(uint a)=> a>=0xffff10 || (a>=0x280000&&a<0x400000);
+    void T(uint a){ if(IsIo(a)) io=true; if (a>=0x080000 && a<0x084000) sharedRead=true; }
+    public byte Read8(uint a){ T(a); if(a<rom.Length) return rom[a]; return mem[a]; }
+    public ushort Read16(uint a){ T(a); if(a<rom.Length) return (ushort)((rom[a]<<8)|rom[a+1]); return (ushort)((mem[a]<<8)|mem[a+1]); }
+    public void Write8(uint a, byte v){ T(a); if(a>=rom.Length) mem[a]=v; }
+    public void Write16(uint a, ushort v){ T(a); if(a>=rom.Length){mem[a]=(byte)(v>>8);mem[a+1]=(byte)v;} }
+  }
+  static byte[] PadRom(byte[] rom, uint pc){ var b = new byte[16]; for(int i=0;i<16;i++) if(pc+i<rom.Length) b[i]=rom[pc+i]; return b; }
+  static long LastT = -1;
+  static bool ParseLine(string line, uint[] er, out byte ccr, out uint pc, out string dis) {
+    ccr=0; pc=0; dis=""; LastT=-1;
+    // R=a,b,c,d,e,f,g,h C=cc  PC: disasm
+    if (!line.StartsWith("R=")) return false;
+    int sp = line.IndexOf(' ');
+    var regs = line.Substring(2, sp-2).Split(',');
+    if (regs.Length!=8) return false;
+    for (int i=0;i<8;i++) er[i]=Convert.ToUInt32(regs[i],16);
+    int c = line.IndexOf("C=", sp); if (c<0) return false;
+    int c2 = line.IndexOf(' ', c);
+    ccr = (byte)Convert.ToUInt32(line.Substring(c+2, c2-(c+2)),16);
+    int colon = line.IndexOf(": ", c2); if (colon<0) return false;
+    { int tp = line.IndexOf(" T=", c2); if (tp>=0 && tp<colon) { var ts = line.Substring(tp+3, colon-6-(tp+3)).Trim(); if (long.TryParse(ts, out var tv)) LastT = tv; } }
+    pc = Convert.ToUInt32(line.Substring(colon-6,6),16);
+    dis = line.Substring(colon+2);
+    return true;
+  }
+  static int Replay(string subbin, string trace, long maxLines, string? ramDump = null) {
+    var rom = File.ReadAllBytes(subbin);
+    var bus = new ReplayBus{rom=rom};
+    if (ramDump != null) { var rd0 = File.ReadAllBytes(ramDump); Array.Copy(rd0, 0, bus.mem, 0x80000, 0x10000); Array.Copy(rd0, 0x10000, bus.mem, 0xfffd10, rd0.Length-0x10000); }
+    var cpu = new H8Cpu(bus, rom);
+    uint[] er = new uint[8], er2 = new uint[8]; byte ccr, ccr2; uint pc, pc2; string dis, dis2;
+    long compared=0, skippedIo=0, irqs=0, bad=0, lines=0; long t1=-1, t2=-1; var costBad = new Dictionary<string,(int n,int exp,int got)>(); long costOk=0, costChecked=0, extSharedDiff=0;
+    var badByOp = new Dictionary<string,int>(); long markPc = -1;
+    using var rd = new StreamReader(trace);
+    string l1 = rd.ReadLine();
+    while (l1!=null && !ParseLine(l1, er, out ccr, out pc, out dis)) l1 = rd.ReadLine();
+    if (l1==null) return 1;
+    ParseLine(l1, er, out ccr, out pc, out dis); t1 = LastT;
+    while (lines<maxLines) {
+      string l2 = rd.ReadLine(); if (l2==null) break;
+      if (l2.Contains("(interrupted at ")) { int ix = l2.IndexOf("(interrupted at ")+16; markPc = Convert.ToUInt32(l2.Substring(ix,6),16); continue; }
+      if (!ParseLine(l2, er2, out ccr2, out pc2, out dis2)) { continue; }
+      lines++; t2 = LastT;
+      Array.Copy(er, cpu.ER, 8); cpu.CCR = ccr; cpu.PC = pc; cpu.Halted=false; cpu.Sleeping=false; cpu.Interrupts=null;
+      bus.io=false; bus.sharedRead=false; long s0 = cpu.States;
+      cpu.Step();
+      long myCost = cpu.States - s0;
+      bool match = cpu.PC==pc2 && cpu.CCR==ccr2; for(int i=0;i<8;i++) if(cpu.ER[i]!=er2[i]) match=false;
+      if (match && t1>=0 && t2>=0 && cpu.PC==pc+(uint)H8Decoder.Decode(PadRom(rom,pc),pc).Len || (match && t1>=0 && t2>=0)) { long exp = t2 - t1; if (exp>0 && exp<40) { costChecked++; if (exp==myCost) costOk++; else { string k = dis.Split(' ')[0]+" len"+H8Decoder.Decode(PadRom(rom,pc),pc).Len; costBad.TryGetValue(k,out var cb); costBad[k]=(cb.n+1,(int)exp,(int)myCost); } } }
+      if (bus.io) { skippedIo++; }
+      else if (match) compared++;
+      else {
+        // interrupt entry? MAME next state is handler with SP-4 and I set
+        if (cpu.PC!=pc2 && er2[7]==cpu.ER[7]-4 && (ccr2&0x80)!=0) {
+          irqs++;
+          // emulate the push into our memory
+          uint sp = cpu.ER[7]-4; uint rpc = markPc >= 0 ? (uint)markPc : cpu.PC; markPc = -1;
+          bus.mem[sp]=(byte)cpu.CCR; bus.mem[sp+1]=(byte)(rpc>>16); bus.mem[sp+2]=(byte)(rpc>>8); bus.mem[sp+3]=(byte)rpc;
+        } else if (bus.sharedRead) {
+          extSharedDiff++;
+          Array.Copy(er2, cpu.ER, 8);
+        } else {
+          bad++;
+          string op = dis.Split(' ')[0]; badByOp.TryGetValue(op,out var n); badByOp[op]=n+1;
+          if (bad<=25) {
+            Console.WriteLine($"MISMATCH line {lines}: {pc:x6}: {dis}");
+            Console.WriteLine($"  pre : er={string.Join(",",er.Select(x=>x.ToString("x")))} ccr={ccr:x2}");
+            Console.WriteLine($"  mame: er={string.Join(",",er2.Select(x=>x.ToString("x")))} ccr={ccr2:x2} pc={pc2:x6}");
+            Console.WriteLine($"  mine: er={string.Join(",",cpu.ER.Select(x=>x.ToString("x")))} ccr={cpu.CCR:x2} pc={cpu.PC:x6}");
+          }
+        }
+      }
+      Array.Copy(er2, er, 8); ccr=ccr2; pc=pc2; dis=dis2; t1=t2;
+    }
+    Console.WriteLine($"cost model: checked={costChecked} exact={costOk}"); foreach (var kv in costBad.OrderByDescending(k=>k.Value.n).Take(25)) Console.WriteLine($"   cost mismatch {kv.Key}: n={kv.Value.n} mame={kv.Value.exp} mine={kv.Value.got}");
+    Console.WriteLine($"shared-RAM loads differing (written by main CPU during the window): {extSharedDiff}");
+    Console.WriteLine($"lines={lines} compared_ok={compared} io_skipped={skippedIo} irq_entries={irqs} mismatches={bad}");
+    foreach (var kv in badByOp.OrderByDescending(k=>k.Value)) Console.WriteLine($"  {kv.Key}: {kv.Value}");
+    return bad==0?0:1;
+  }
+
+  static int DasmSweep(string subbin, string dasm) {
+    var rom = File.ReadAllBytes(subbin);
+    int agree=0, bothIllegal=0, mism=0, mineInvalidOnly=0, total=0;
+    var kinds = new Dictionary<string,int>();
+    foreach (var line in File.ReadLines(dasm)) {
+      int c = line.IndexOf(": "); if (c<0) continue;
+      uint pc = Convert.ToUInt32(line.Substring(0,c),16); string exp = Regex.Replace(line.Substring(c+2).Trim(), @"\s+"," ");
+      var buf = new byte[16]; for (int i=0;i<16;i++) if (pc+i<rom.Length) buf[i]=rom[pc+i];
+      var insn = H8Decoder.Decode(buf, pc);
+      string got = Regex.Replace(H8Decoder.Disassemble(insn, pc), @"\s+"," ");
+      total++;
+      if (insn.Op==H8Op.Invalid) { if (exp=="illegal") bothIllegal++; else { mineInvalidOnly++; var k=exp.Split(' ')[0]; kinds.TryGetValue(k,out var n); kinds[k]=n+1; } }
+      else if (got==exp) agree++;
+      else { mism++; if (mism<=40) Console.WriteLine($"{pc:x6}: mame [{exp}] mine [{got}]"); }
+    }
+    Console.WriteLine($"total={total} agree={agree} bothIllegal={bothIllegal} mism={mism} mineInvalid_mameValid={mineInvalidOnly}");
+    foreach (var kv in kinds.OrderByDescending(k=>k.Value).Take(30)) Console.WriteLine($"  mame-only: {kv.Key} x{kv.Value}");
+    return mism==0?0:1;
+  }
+
+  static int MixCmp(string c352bin, string writes, string wav, int shift, long maxFrames) {
+    var rom = File.ReadAllBytes(c352bin);
+    var chip = new C352(rom);
+    var w = File.ReadAllBytes(wav);
+    int dataOff = 44; long frames = (w.Length-44)/4; if (frames>maxFrames) frames=maxFrames;
+    bool dump = Environment.GetEnvironmentVariable("DUMP")!=null; long dumpFrom = dump? long.Parse(Environment.GetEnvironmentVariable("DUMP")!):0; var sdh = new SortedDictionary<string,long>(); long done = 0; long exact=0, diffs=0; int maxd=0; long firstDiff=-1;
+    short[] buf = new short[2];
+    long[] hist = new long[8];
+    void RenderTo(long target) {
+      while (done < target && done < frames) {
+        chip.GenerateSample(out short l, out short r, out _, out _);
+        if (Environment.GetEnvironmentVariable("MAMEOUT")!=null) { l = (short)(int)((float)l/32768.0f*32767.0f); r = (short)(int)((float)r/32768.0f*32767.0f); }
+        short wl = BitConverter.ToInt16(w, dataOff+(int)done*4), wr = BitConverter.ToInt16(w, dataOff+(int)done*4+2);
+        if (dump && done>=dumpFrom && done<dumpFrom+40) Console.WriteLine($"{done}: mine=({l},{r}) mame=({wl},{wr})");
+        { int dd=l-wl; string key=(l>0?"pos":l<0?"neg":"zero")+":"+dd; sdh.TryGetValue(key,out var cc); sdh[key]=cc+1; }
+        if (l==wl && r==wr) exact++; else { if (Environment.GetEnvironmentVariable("LIST")!=null) Console.WriteLine($"DIFF {done}: mine=({l},{r}) mame=({wl},{wr}) t={done/88200.0:F6}"); diffs++; int d=Math.Max(Math.Abs(l-wl),Math.Abs(r-wr)); if(d>maxd)maxd=d; if(firstDiff<0)firstDiff=done; }
+        done++;
+      }
+    }
+    long nw=0;
+    foreach (var line in File.ReadLines(writes)) {
+      var p = line.Split(' ');
+      double t = double.Parse(p[0], CultureInfo.InvariantCulture);
+      int addr = Convert.ToInt32(p[1],16); ushort data = Convert.ToUInt16(p[2],16), mask = Convert.ToUInt16(p[3],16);
+      long idx = (long)Math.Floor(t*88200.0 + double.Parse(Environment.GetEnvironmentVariable("EPS") ?? "1e-6", CultureInfo.InvariantCulture)) + shift;
+      RenderTo(idx);
+      chip.Write((addr-0x280000)>>1, data, mask);
+      nw++;
+    }
+    RenderTo(frames);
+    if (Environment.GetEnvironmentVariable("SDH")!=null) foreach(var kv in sdh) Console.WriteLine($"  {kv.Key} x{kv.Value}");
+    Console.WriteLine($"writes={nw} frames={frames} exact={exact} differing={diffs} maxAbsDiff={maxd} firstDiffFrame={firstDiff}");
+    return diffs==0?0:1;
+  }
+
+  static int Board(string subbin, string c352bin, double seconds, string outTrace) {
+    var b = new S12SoundBoard(File.ReadAllBytes(subbin), File.ReadAllBytes(c352bin));
+    b.Mcu.Intc.MameIcrQuirk = Environment.GetEnvironmentVariable("QUIRK")!=null;
+    using var w = new StreamWriter(outTrace);
+    b.C352WriteTrace = (st, addr, data, mask) => w.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0:F9} {1:x} {2:x4} {3:x4}", st/16934400.0, addr, data, mask));
+    b.RunUntil((long)(seconds*16934400));
+    var cpu = b.Mcu.Cpu;
+    Console.WriteLine($"states={cpu.States} insns={cpu.Instructions} pc={cpu.PC:x6} halted={cpu.Halted} sleeping={cpu.Sleeping} illegal@{cpu.LastIllegalPc:x6} {BitConverter.ToString(cpu.LastIllegalBytes)} unmappedR={b.Mcu.UnmappedReads} unmappedW={b.Mcu.UnmappedWrites}");
+    return 0;
+  }
+
+  // full <sub.bin> <c352.bin> <shared_writes.txt> <frames.txt> <seconds> <outdir>
+  static int Full(string subbin, string c352bin, string sharedTxt, string framesTxt, double seconds, string outdir) {
+    var b = new S12SoundBoard(File.ReadAllBytes(subbin), File.ReadAllBytes(c352bin));
+    b.Mcu.Intc.MameIcrQuirk = Environment.GetEnvironmentVariable("QUIRK")!=null;
+    b.ExternalVBlank = Environment.GetEnvironmentVariable("INTERNAL")==null;
+    Directory.CreateDirectory(outdir);
+    using var w = new StreamWriter(Path.Combine(outdir, "c352_writes_mine.txt"));
+    b.C352WriteTrace = (st, addr, data, mask) => w.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0:F9} {1:x} {2:x4} {3:x4}", st/16934400.0, addr, data, mask));
+    var ev = new List<(long st, int kind, int a, ushort d, ushort m)>(); // kind 0 = vblank start, 1 = vblank end, 2 = main write16
+    var frameStarts = new List<long>();
+    foreach (var line in File.ReadLines(framesTxt)) {
+      var p = line.Split(' '); frameStarts.Add((long)Math.Floor(double.Parse(p[0], CultureInfo.InvariantCulture)*16934400.0 + 1e-4)); double t = double.Parse(p[0], CultureInfo.InvariantCulture), vbl = double.Parse(p[2], CultureInfo.InvariantCulture);
+      ev.Add(((long)Math.Floor(t*16934400.0 + 1e-4), 0, 0, 0, 0)); ev.Add(((long)Math.Floor((t+vbl)*16934400.0 + 1e-4), 1, 0, 0, 0));
+    }
+    foreach (var line in File.ReadLines(sharedTxt)) {
+      var p = line.Split(' '); double t = double.Parse(p[0], CultureInfo.InvariantCulture);
+      uint addr = Convert.ToUInt32(p[1],16); uint data = Convert.ToUInt32(p[2],16), mask = Convert.ToUInt32(p[3],16);
+      long st = (long)Math.Floor(t*16934400.0 + 1e-4);
+      if (Environment.GetEnvironmentVariable("QUANT")=="frame") { var nf = frameStarts.FirstOrDefault(x => x > st); if (nf != 0) st = nf; }
+      int off = (int)(addr - 0x1f080000);
+      if ((mask & 0xffff) != 0) ev.Add((st, 2, off, (ushort)(data & 0xffff), (ushort)(mask & 0xffff)));
+      if ((mask >> 16) != 0) ev.Add((st, 2, off+2, (ushort)(data >> 16), (ushort)(mask >> 16)));
+    }
+    ev = ev.Select((e,i)=>(e,i)).OrderBy(x=>x.e.st).ThenBy(x=>x.i).Select(x=>x.e).ToList();
+    long end = (long)(seconds*16934400.0);
+    StreamWriter? win = null; double wt0=0, wt1=0;
+    if (Environment.GetEnvironmentVariable("WIN0")!=null) { wt0=double.Parse(Environment.GetEnvironmentVariable("WIN0")!, CultureInfo.InvariantCulture); wt1=double.Parse(Environment.GetEnvironmentVariable("WIN1")!, CultureInfo.InvariantCulture); win = new StreamWriter(Path.Combine(outdir,"window_mine.txt")); }
+    var seenPcs = new HashSet<uint>(); var firstT = new Dictionary<uint,double>(); bool cov = Environment.GetEnvironmentVariable("COV")!=null;
+    var ring = new uint[64]; int rp=0; var hist = new Dictionary<uint,long>(); bool arm=false;
+    if (Environment.GetEnvironmentVariable("NOHOOK")==null) b.Mcu.StepHook = pc => { if (cov && seenPcs.Add(pc)) firstT[pc] = b.Mcu.Cpu.States/16934400.0; if (win!=null) { double tt = b.Mcu.Cpu.States/16934400.0; if (tt>=wt0 && tt<=wt1) { var c=b.Mcu.Cpu; var ins=c.DecodeAt(pc); win.WriteLine("R="+string.Join(",", c.ER.Select(x=>x.ToString("x")))+" C="+c.CCR.ToString("x")+" T="+tt.ToString("F9")+" "+pc.ToString("X6")+": "+H8Decoder.Disassemble(ins,pc)); } } if(arm){ ring[rp++&63]=pc; hist.TryGetValue(pc,out var c); hist[pc]=c+1; } };
+    foreach (var e in ev) {
+      if (e.st > end) break;
+      if (!b.ExternalVBlank && e.kind != 2) continue;
+      b.RunUntil(e.st);
+      if (e.kind == 0) b.SetVBlank(true); else if (e.kind == 1) b.SetVBlank(false); else b.MainWrite16(e.a, e.d, e.m);
+    }
+    b.RunUntil(end - 2*16934400/10 > b.Mcu.Cpu.States ? end - 2*16934400/10 : b.Mcu.Cpu.States); arm=true;
+    b.RunUntil(end);
+    if (Environment.GetEnvironmentVariable("WHERE")!=null) { Console.WriteLine("last PCs: "+string.Join(" ", Enumerable.Range(0,64).Select(k=>ring[(rp+k)&63].ToString("x6")))); foreach (var kv in hist.OrderByDescending(k=>k.Value).Take(12)) Console.WriteLine($"  pc {kv.Key:x6} x{kv.Value}"); for (int k=0;k<5;k++) Console.WriteLine($"ITU{k}: TCR={b.Mcu.Itu[k].Tcr:x2} TIER={b.Mcu.Itu[k].Tier:x2} TIOR={b.Mcu.Itu[k].Tior:x2} GRA={b.Mcu.Itu[k].Tgr[0]:x4} GRB={b.Mcu.Itu[k].Tgr[1]:x4}");
+    Console.WriteLine($"ICRA={b.Mcu.Intc.IcrA:x2} ICRB={b.Mcu.Intc.IcrB:x2} ISCR={b.Mcu.Intc.Iscr:x2} SYSCR={b.Mcu.Intc.Syscr:x2} IER={b.Mcu.Intc.Ier:x2} ISR={b.Mcu.Intc.Isr:x2} CCR={b.Mcu.Cpu.CCR:x2} SP={b.Mcu.Cpu.ER[7]:x}"); }
+    w.Flush(); win?.Flush();
+    if (cov) { var ops = new SortedDictionary<string,int>(); foreach (var pc2 in seenPcs) { var ins = b.Mcu.Cpu.DecodeAt(pc2); string k = H8Decoder.Mnemonic(ins); ops.TryGetValue(k, out var c); ops[k]=c+1; } File.WriteAllLines(Path.Combine(outdir,"executed_pcs.txt"), seenPcs.OrderBy(x=>x).Select(x=>x.ToString("x6")+" "+firstT[x].ToString("F6")+" "+H8Decoder.Disassemble(b.Mcu.Cpu.DecodeAt(x),x))); File.WriteAllLines(Path.Combine(outdir,"executed_ops.txt"), ops.Select(kv=>kv.Key+"\t"+kv.Value)); Console.WriteLine($"unique executed PCs: {seenPcs.Count}, distinct mnemonics: {ops.Count}"); }
+    var cpu = b.Mcu.Cpu;
+    Console.WriteLine($"states={cpu.States} insns={cpu.Instructions} pc={cpu.PC:x6} halted={cpu.Halted} sleeping={cpu.Sleeping} illegal@{cpu.LastIllegalPc:x6} unmappedR={b.Mcu.UnmappedReads} unmappedW={b.Mcu.UnmappedWrites} audioFrames={b.AvailableAudioFrames}");
+    // dump audio
+    int frames = b.AvailableAudioFrames; var buf = new short[2*frames]; b.ReadAudio(buf, frames);
+    using (var fs = new FileStream(Path.Combine(outdir, "mine.pcm"), FileMode.Create)) { var bytes = new byte[buf.Length*2]; Buffer.BlockCopy(buf, 0, bytes, 0, bytes.Length); fs.Write(bytes); }
+    return 0;
+  }
+
+  // pcmcmp <mine.pcm (raw s16le stereo)> <mame.wav> [lagFrames]: compares after MAME's float->int16 output stage (x32767/32768, trunc toward zero)
+  static int PcmCmp(string pcm, string wav, int lag) {
+    var mine = File.ReadAllBytes(pcm); var w = File.ReadAllBytes(wav);
+    long frames = Math.Min(mine.Length/4, (w.Length-44)/4) - lag;
+    long exact=0, diff=0; int maxd=0; long first=-1;
+    for (long i=0;i<frames;i++) {
+      for (int ch=0; ch<2; ch++) {
+        short m = BitConverter.ToInt16(mine, (int)(i*4+ch*2));
+        short ex = (short)(int)((float)m/32768.0f*32767.0f);
+        short wv = BitConverter.ToInt16(w, 44+(int)((i+lag)*4+ch*2));
+        if (ex==wv) exact++; else { diff++; maxd=Math.Max(maxd, Math.Abs(ex-wv)); if (first<0) first=i; }
+      }
+    }
+    Console.WriteLine($"compared {frames*2} samples: exact={exact} ({100.0*exact/(frames*2):F4}%) differing={diff} maxAbsDiff={maxd} firstDiffFrame={first}");
+    return diff==0?0:1;
+  }
+}
