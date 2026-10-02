@@ -1,0 +1,135 @@
+diff --git a/RecompOne.Recompiler/CodeGen/EntryWriter.cs b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+index 847777e..3c376ba 100644
+--- a/RecompOne.Recompiler/CodeGen/EntryWriter.cs
++++ b/RecompOne.Recompiler/CodeGen/EntryWriter.cs
+@@ -62,6 +62,22 @@ public static class EntryWriter
+         File.WriteAllText(Path.Combine(outDir, "Stubs.cs"), stubs.ToString());
+     }
+ 
++    public static void WriteArcadeStub(PsxExe exe, string? mainCall, string outDir)
++    {
++        var sb = new StringBuilder();
++        sb.AppendLine("namespace Recompiled;");
++        sb.AppendLine();
++        sb.AppendLine("public static class Entry");
++        sb.AppendLine("{");
++        sb.AppendLine($"    public const uint ImageBase = 0x{exe.Destination:X8}u;");
++        sb.AppendLine($"    public const uint InitialPc = 0x{exe.InitialPC:X8}u;");
++        sb.AppendLine($"    public const uint InitialSp = 0x{exe.InitialSP:X8}u;");
++        sb.AppendLine("    public static void Run() =>");
++        sb.AppendLine("        throw new System.NotImplementedException(\"Namco System 12 runtime (memory map, banked ROM, MMIO, GPU, sound) is NOT IMPLEMENTED\");");
++        sb.AppendLine("}");
++        File.WriteAllText(Path.Combine(outDir, "Entry.cs"), sb.ToString());
++    }
++
+     private static string DispatchTableName(string name)
+     {
+         return $"{char.ToUpperInvariant(name[0])}{name[1..]}DispatchTable";
+diff --git a/RecompOne.Recompiler/CodeGen/OverlayWriter.cs b/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
+index 06b891a..241563a 100644
+--- a/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
++++ b/RecompOne.Recompiler/CodeGen/OverlayWriter.cs
+@@ -56,6 +56,21 @@ public static class OverlayWriter
+         WriteAll(config, outDir, className, mainExe, sysCfg, overlayResults, allFuncs);
+     }
+ 
++    //Arcade/raw entry: explicit image + addresses. No disc, no SYSTEM.CNF, no PS1 SDK HLE patches.
++    public static void WriteRaw(RecompOneConfig config, PsxExe exe, string outDir)
++    {
++        var className = SafeIdentifier(config.Game.Name);
++        var overlayResults = new List<OverlayResult> { AnalyzeMain(config, exe) };
++        var images = overlayResults.Select(r => new ImageFunctions(r.Name, r.Functions, r.Instructions)).ToList();
++        FunctionPipeline.ScanCrossImage(images);
++        FunctionPipeline.ScanEscapesToFixpoint(images);
++        var allFuncs = overlayResults.SelectMany(o => o.Functions).ToList();
++        ResolveCollisions(allFuncs);
++        ApplyPatches(allFuncs, config.Patches);
++        Console.WriteLine("[Recompiler] raw/arcade mode: PS1 SDK HLE patches (SdkPatches) NOT applied");
++        WriteAll(config, outDir, className, exe, new SystemCfg(), overlayResults, allFuncs, false);
++    }
++
+     private static OverlayResult AnalyzeMain(RecompOneConfig config, PsxExe mainExe)
+     {
+         FunctionInfo? rawElf = null;
+@@ -241,7 +256,7 @@ public static class OverlayWriter
+     }
+ 
+     private static void WriteAll(RecompOneConfig config, string outDir, string className, PsxExe mainExe,
+-        SystemCfg sysCfg, List<OverlayResult> overlayResults, List<MipsFunction> allFuncs)
++        SystemCfg sysCfg, List<OverlayResult> overlayResults, List<MipsFunction> allFuncs, bool writeEntry = true)
+     {
+         var overlayParts = SpreadClasses(className, overlayResults);
+         var funcClass = new Dictionary<uint, string>();
+@@ -278,9 +293,17 @@ public static class OverlayWriter
+                 SymbolRelocator.Plan(result.Functions, config.Relocations, result.Name));
+         }
+ 
+-        Console.WriteLine("[Recompiler] Emitting Entry.cs");
+         var overlayNames = overlayResults.Select(o => o.Name).ToList();
+-        EntryWriter.Write(mainExe, sysCfg, sysCfg.BootExe, className, mainCall, overlayNames, outDir);
++        if (writeEntry)
++        {
++            Console.WriteLine("[Recompiler] Emitting Entry.cs");
++            EntryWriter.Write(mainExe, sysCfg, sysCfg.BootExe, className, mainCall, overlayNames, outDir);
++        }
++        else
++        {
++            Console.WriteLine("[Recompiler] raw/arcade mode: PS1 Entry.cs NOT emitted (System 12 runtime NOT IMPLEMENTED)");
++            EntryWriter.WriteArcadeStub(mainExe, mainCall, outDir);
++        }
+ 
+         Console.WriteLine("[Recompiler] finished "); //maybe add time it took
+     }
+diff --git a/RecompOne.Recompiler/Config/ConfigLoader.cs b/RecompOne.Recompiler/Config/ConfigLoader.cs
+index a5d646b..294d49b 100644
+--- a/RecompOne.Recompiler/Config/ConfigLoader.cs
++++ b/RecompOne.Recompiler/Config/ConfigLoader.cs
+@@ -7,6 +7,13 @@ public sealed class RecompOneConfig
+ {
+     [JsonPropertyName("game")] public GameConfig Game { get; set; } = new();
+     [JsonPropertyName("cue")] public string Cue { get; set; } = "";
++
++    //raw image mode (arcade): explicit bytes + addresses instead of a PS1 disc
++    [JsonPropertyName("image")] public string? Image { get; set; }
++    [JsonPropertyName("imageBase")] public string? ImageBase { get; set; }
++    [JsonPropertyName("entry")] public string? Entry { get; set; }
++    [JsonPropertyName("initialSp")] public string? InitialSp { get; set; }
++    [JsonPropertyName("initialGp")] public string? InitialGp { get; set; }
+     [JsonPropertyName("elf")] public string? Elf { get; set; }
+     [JsonPropertyName("map")] public string? Map { get; set; }
+     [JsonPropertyName("funcMap")] public string? FuncMap { get; set; }
+diff --git a/RecompOne.Recompiler/Program.cs b/RecompOne.Recompiler/Program.cs
+index dda4983..36ae84b 100644
+--- a/RecompOne.Recompiler/Program.cs
++++ b/RecompOne.Recompiler/Program.cs
+@@ -51,6 +51,30 @@ foreach (var overlay in config.Overlays)
+     overlay.FuncMap = ResolvePath(overlay.FuncMap);
+ }
+ 
++if (config.Image != null)
++{
++    var imgPath = ResolvePath(config.Image)!;
++    if (!File.Exists(imgPath)) { Console.Error.WriteLine($"image not found: {imgPath}"); return 1; }
++    if (config.ImageBase == null || config.Entry == null)
++    { Console.Error.WriteLine("raw mode needs imageBase and entry (hex strings)"); return 1; }
++    var code = File.ReadAllBytes(imgPath);
++    var exe = new RecompOne.Recompiler.Psx.PsxExe
++    {
++        Destination = Convert.ToUInt32(config.ImageBase, 16),
++        InitialPC = Convert.ToUInt32(config.Entry, 16),
++        InitialSP = config.InitialSp != null ? Convert.ToUInt32(config.InitialSp, 16) : 0,
++        InitialGP = config.InitialGp != null ? Convert.ToUInt32(config.InitialGp, 16) : 0,
++        TextSize = (uint)code.Length,
++        Code = code,
++        Region = "RAW-IMAGE"
++    };
++    var rawOut = Path.GetFullPath(Path.Combine(configDir, config.Game.Output));
++    Directory.CreateDirectory(rawOut);
++    Console.WriteLine($"[RecompOne] RAW image {imgPath} ({code.Length:X} bytes) base=0x{exe.Destination:X8} entry=0x{exe.InitialPC:X8}");
++    try { OverlayWriter.WriteRaw(config, exe, rawOut); Console.WriteLine("[RecompOne] Recompilation finished."); return 0; }
++    catch (Exception ex) { Console.Error.WriteLine($"[RecompOne] Error: {ex.Message}"); Console.Error.WriteLine(ex.StackTrace); return 1; }
++}
++
+ var cuePath = Path.GetFullPath(Path.Combine(configDir, config.Cue));
+ 
+ if (!File.Exists(cuePath))

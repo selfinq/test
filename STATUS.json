@@ -45,5 +45,12 @@
   "facts": {
     "boot": "reset 0xbfc00000 in main ROM (4 MB @0x1fc00000); loader copies/decompresses image from ROM 0x28000 to 0x80010000 (0x398350 bytes); entry = word @ROM 0x2401c = 0x80010000; RAM 4 MB (stack 0x803fffc8)",
     "nondeterminism": "MAME run depends on NVRAM (at28c16) state: with a fresh NVRAM the first boot differed from later boots; traces must start from a saved NVRAM copy (not yet archived)"
+  },
+  "recompiler_raw_mode": {
+    "patch": "patches/0001-raw-image-mode.patch (apply on RecompOne 8d0091c; MIT; not for upstream submission - upstream rejects AI-generated PRs)",
+    "config": "tools/ttt_raw.json",
+    "run": "reports/recomp_raw_run1.log",
+    "result": "RAN: 3418 functions, 80 jump tables (7684 entries), main.cs 206 MB. NOT validated: coverage unknown; some functions huge (up to ~4 MB of C#) because the detector extends through data; PS1 SdkPatches deliberately skipped; PS1 Entry.cs deliberately not emitted",
+    "compile_check": "running/see reports/ttt_generated_build.log"
   }
 }
