@@ -36,3 +36,5 @@ reports/trace_a02/out/
 reports/trace_a02/**/*.pcs
 reports/trace_a02/**/*.samples
 **/*.pcs
+
+dist/
