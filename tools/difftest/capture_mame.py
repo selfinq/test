@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,39 +35,53 @@ def file_sha256(path):
     return h.hexdigest()
 
 
-def convert_events(tsv_path, jsonl_path):
-    """events.tsv (raw, from Lua) -> events JSONL; returns list of event dicts (kept in memory for chains)."""
-    events = []
-    with open(tsv_path) as f, open(jsonl_path, "w") as out:
+EV_W = re.compile(r"^([RW]) ([0-9a-f]{8}) ([0-9a-f]{8})\s*$")
+EV_D = re.compile(r"^D (\d+) ([0-9a-f]{8}) ([0-9a-f]{8}) ([0-9a-f]{8}) (\d+) ([0-9a-f]{16})\s*$")
+EV_C = re.compile(r"^C (\d+)\s*$")
+
+
+def parse_debug_log(path, event_max=None):
+    """debug.log (MAME debug console) -> (events, marks, truncated); marks[seq] = number of events before checkpoint seq.
+    Lines that are neither events nor markers (banner, 'Stopped at ...') are ignored."""
+    events, marks, truncated = [], {}, False
+    with open(path, errors="replace") as f:
         for ln in f:
-            p = ln.rstrip("\n").split("\t")
-            if not p or not p[0]:
+            m = EV_W.match(ln)
+            if m:
+                if event_max is not None and len(events) >= event_max:
+                    truncated = True
+                    continue
+                events.append({"k": m.group(1), "a": "0x" + m.group(2), "d": "0x" + m.group(3)})
                 continue
-            if p[0] in ("R", "W"):
-                _, a, m, d, pc, fr = p
-                ev = {"k": p[0], "a": "0x" + a, "m": "0x" + m, "d": "0x" + d, "pc": "0x" + pc, "f": int(fr)}
-            elif p[0] == "D":
-                _, ch, chcr, madr, bcr, n, h, pc, fr = p
-                ev = {"k": "D", "ch": int(ch), "chcr": "0x" + chcr, "madr": "0x" + madr, "bcr": "0x" + bcr,
-                      "n": int(n, 16), "h": "0x" + h, "pc": "0x" + pc, "f": int(fr)}
-            else:
-                raise ValueError("bad event line: %r" % ln)
-            events.append(ev)
-            out.write(json.dumps(ev, separators=(",", ":")) + "\n")
-    return events
+            m = EV_D.match(ln)
+            if m:
+                if event_max is not None and len(events) >= event_max:
+                    truncated = True
+                    continue
+                events.append({"k": "D", "ch": int(m.group(1)), "chcr": "0x" + m.group(2), "madr": "0x" + m.group(3),
+                               "bcr": "0x" + m.group(4), "n": int(m.group(5)), "h": "0x" + m.group(6)})
+                continue
+            m = EV_C.match(ln)
+            if m:
+                marks[int(m.group(1))] = len(events)
+    return events, marks, truncated
 
 
-def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, keep_raw=False, meta_extra=None):
+def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, keep_raw=False, meta_extra=None,
+             event_max=None):
     """Convert a raw capture directory into the snapshot JSON (+ events sidecar). Pure function of the raw
     directory contents, so it is unit-testable without MAME."""
     manifest = json.load(open(os.path.join(raw_dir, "manifest.json")))
     base = sl.parse_int(regions_cfg["ram_base"])
     ev_path = out_path[:-5] + ".events.jsonl" if out_path.endswith(".json") else out_path + ".events.jsonl"
-    events = []
-    ev_tsv = os.path.join(raw_dir, "events.tsv")
-    have_events = manifest.get("events_enabled") and os.path.exists(ev_tsv)
+    log = os.path.join(raw_dir, "debug.log")
+    have_events = bool(manifest.get("events_enabled")) and os.path.exists(log)
+    events, marks, truncated = [], {}, False
     if have_events:
-        events = convert_events(ev_tsv, ev_path)
+        events, marks, truncated = parse_debug_log(log, event_max)
+        with open(ev_path, "w") as out:
+            for ev in events:
+                out.write(json.dumps(ev, separators=(",", ":")) + "\n")
     chains = sl.EventChains()
     pos = 0
     cps = []
@@ -82,10 +97,12 @@ def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, 
             "cpu": {"pc": raw["pc"], "gpr": raw["gpr"], "hi": raw["hi"], "lo": raw["lo"],
                     "cop0": raw["cop0"], "cop2_d": raw["cop2_d"], "cop2_c": raw["cop2_c"]},
             "ram": sl.hash_ram(ram, regions_cfg, sp),
-            "info": {"frame": raw["frame"], "io_volatile_reads": raw["io_volatile_reads"]},
+            "info": {"frame": raw["frame"]},
         }
         if have_events:
-            n = raw["event_count"]
+            if raw["seq"] not in marks:
+                raise ValueError("checkpoint %s (seq %d) has no marker in debug.log" % (raw["id"], raw["seq"]))
+            n = marks[raw["seq"]]
             while pos < n:
                 chains.add(events[pos])
                 pos += 1
@@ -100,16 +117,15 @@ def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, 
                           "debugger": manifest["debugger"]}, **(producer_extra or {})),
         "capture": dict(capture_info, ram_base=sl.hx(base), ram_size=regions_cfg["ram_size"],
                         page_size=regions_cfg["page_size"], stack_top=regions_cfg["stack_top"],
-                        events_enabled=bool(have_events), event_truncated=bool(manifest.get("event_truncated"))),
+                        events_enabled=bool(have_events)),
         "regions": [{"name": r["name"], "base": r["base"], "size": r["size"]} for r in regions_cfg["regions"]],
         "checkpoints": cps,
     }
     if have_events:
-        # drain events after the last checkpoint so the total chain covers the whole log
-        while pos < len(events):
+        while pos < len(events):     # drain: total chain covers the whole log
             chains.add(events[pos])
             pos += 1
-        snap["events"] = dict(chains.state(), file=os.path.basename(ev_path), truncated=bool(manifest.get("event_truncated")))
+        snap["events"] = dict(chains.state(), file=os.path.basename(ev_path), truncated=truncated)
     snap["meta"] = dict(meta_extra or {})
     snap["snapshot_sha256"] = sl.snapshot_hash(snap)
     with open(out_path, "w") as f:
@@ -125,8 +141,9 @@ def main(argv=None):
     ap.add_argument("--every", type=int, default=60, help="periodic frame checkpoint interval (0=off)")
     ap.add_argument("--pcs", default="80010000:1",
                     help="instruction-exact checkpoints 'addr:nth[,addr:nth]' (needs -debug -debugger none); '' = none")
+    ap.add_argument("--reads", action="store_true", help="also watch reads of EEPROM/protection/I_MASK (MAME ~10x slower)")
     ap.add_argument("--no-events", action="store_true", help="do not record I/O + DMA events")
-    ap.add_argument("--event-max", type=int, default=2000000)
+    ap.add_argument("--event-max", type=int, default=5000000, help="keep at most this many events (rest dropped, flagged truncated)")
     ap.add_argument("--workdir", help="work directory (default: temp dir, removed unless --keep-raw)")
     ap.add_argument("--keep-raw", action="store_true", help="keep raw RAM dumps and work dir")
     ap.add_argument("--mame", default="/usr/games/mame")
@@ -145,10 +162,10 @@ def main(argv=None):
     raw = os.path.join(work, "raw")
     shutil.rmtree(raw, ignore_errors=True)
     os.makedirs(raw)
-    use_dbg = bool(a.pcs)
+    use_dbg = bool(a.pcs) or not a.no_events
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", DT_OUT=raw, DT_EVERY=str(a.every),
-               DT_MAX_FRAME=str(a.frames), DT_PCS=a.pcs, DT_EVENTS="0" if a.no_events else "1",
-               DT_EVENT_MAX=str(a.event_max), DT_RAM_BASE=regions_cfg["ram_base"], DT_RAM_SIZE=str(regions_cfg["ram_size"]))
+               DT_MAX_FRAME=str(a.frames), DT_PCS=a.pcs, DT_EVENTS="0" if a.no_events else "1", DT_READS="1" if a.reads else "0",
+               DT_RAM_BASE=regions_cfg["ram_base"], DT_RAM_SIZE=str(regions_cfg["ram_size"]))
     cmd = [a.mame, "tektagt", "-rompath", a.rompath, "-video", "none", "-sound", "none", "-nothrottle",
            "-seconds_to_run", str(a.frames // 30 + 60), "-autoboot_script", os.path.join(HERE, "mame_capture.lua"),
            "-nvram_directory", os.path.join(work, "nvram"), "-cfg_directory", os.path.join(work, "cfg"),
@@ -157,23 +174,23 @@ def main(argv=None):
            "-diff_directory", os.path.join(work, "diff"), "-comment_directory", os.path.join(work, "cmt"),
            "-input_directory", os.path.join(work, "inp")]
     if use_dbg:
-        cmd += ["-debug", "-debugger", "none"]
+        cmd += ["-debug", "-debugger", "none", "-debuglog"]
     os.makedirs(os.path.join(work, "home"), exist_ok=True)
-    p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=a.timeout)
+    p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=a.timeout, cwd=raw)   # debug.log lands in cwd
     open(os.path.join(work, "mame.stderr.txt"), "w").write(p.stderr)
     open(os.path.join(work, "mame.stdout.txt"), "w").write(p.stdout)
     if not os.path.exists(os.path.join(raw, "done.txt")):
         sys.exit("MAME run did not complete (rc=%s); see %s/mame.stderr.txt" % (p.returncode, work))
     manifest = json.load(open(os.path.join(raw, "manifest.json")))
-    if a.pcs and not manifest["debugger"]:
-        sys.exit("pc checkpoints requested but the MAME debugger interface is unavailable")
+    if use_dbg and not manifest["debugger"]:
+        sys.exit("pc checkpoints/events requested but the MAME debugger interface is unavailable")
     nv = os.path.join(work, "nvram", "tektagt", "at28c16")
     seed_sha = open(os.path.join(a.seed_dir, "SEED.sha256")).read().split()[0]
     capture_info = {"frames": a.frames, "every": a.every, "pcs": [s for s in a.pcs.split(",") if s],
-                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max}
+                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads)}
     meta = {"nvram_after_run_sha256": file_sha256(nv) if os.path.exists(nv) else None,
             "mame_binary": a.mame, "mame_binary_sha256": file_sha256(a.mame), "mame_rc": p.returncode}
-    snap = finalize(raw, a.out, regions_cfg, capture_info, meta_extra=meta, keep_raw=a.keep_raw)
+    snap = finalize(raw, a.out, regions_cfg, capture_info, meta_extra=meta, keep_raw=a.keep_raw, event_max=a.event_max)
     print("wrote %s  snapshot_sha256=%s  checkpoints=%d  events=%s" % (
         a.out, snap["snapshot_sha256"], len(snap["checkpoints"]), snap.get("events", {}).get("w_count", "-")))
     if not a.workdir and not a.keep_raw:

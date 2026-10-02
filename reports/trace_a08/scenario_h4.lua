@@ -4,7 +4,7 @@ KEEP = {}
 local m = manager.machine
 local cpu = m.devices[":maincpu"]; local st = cpu.state; local mem = cpu.spaces["program"]
 local scr = m.screens[":screen"]
-local SP = "/tmp/claude-0/-home-user-test/af2ad0ad-b38d-519b-aaa8-37707f74d539/scratchpad/seq/"
+local SP = (os.getenv("A08_OUT") or "/tmp/a08_out") .. "/"
 local out = io.open("/home/user/test/reports/trace_a08/scenario_h4_log.txt", "w")
 local frame = 0
 local function log(...) out:write(string.format("f%d ", frame), string.format(...), "\n") end

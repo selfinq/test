@@ -101,11 +101,12 @@ def hash_ram(ram, regions_cfg, sp):
 # ------------------------------------------------------------------ events
 
 def event_compared_text(ev):
-    """Canonical text of the compared fields of one event (pc / frame are never compared).
-    R/W: 'W,<addr8>,<mask8>,<data8>'   D: 'D,<ch>,<chcr8>,<madr8>,<bcr8>,<n>,<hash16>'"""
+    """Canonical text of the compared fields of one event (pc / width / frame are never compared).
+    R/W: 'W,<addr8>,<data8>'   (exact byte address, value right aligned = zero extended access value)
+    D:   'D,<ch>,<chcr8>,<madr8>,<bcr8>,<n>,<hash16>'  (DMA start summary)"""
     k = ev["k"]
     if k in ("R", "W"):
-        return "%s,%08x,%08x,%08x" % (k, parse_int(ev["a"]), parse_int(ev["m"]), parse_int(ev["d"]) & parse_int(ev["m"]))
+        return "%s,%08x,%08x" % (k, parse_int(ev["a"]), parse_int(ev["d"]) & 0xffffffff)
     if k == "D":
         return "D,%d,%08x,%08x,%08x,%d,%016x" % (ev["ch"], parse_int(ev["chcr"]), parse_int(ev["madr"]),
                                                   parse_int(ev["bcr"]), ev["n"], parse_int(ev["h"]))

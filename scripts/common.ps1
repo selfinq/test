@@ -2,6 +2,7 @@
 # Works in Windows PowerShell 5.1 and PowerShell 7+. Every script stops at the first error and prints the failing step.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$global:LASTEXITCODE = 0
 
 if (-not (Test-Path variable:global:ScriptName)) { $global:ScriptName = 'script.ps1' }
 $global:Repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -96,8 +97,10 @@ function Invoke-Python([string[]]$PyArgs) { Invoke-Native $PythonExe ($PythonPre
 
 function Test-Dotnet {
     Need-Cmd 'dotnet' "Install the .NET $($Pins['DOTNET_MIN_MAJOR']) SDK (https://dotnet.microsoft.com/download)."
-    $v = (& dotnet --version | Select-Object -First 1).Trim()
+    $global:LASTEXITCODE = 0
+    $raw = & dotnet --version
     if ($LASTEXITCODE -ne 0) { Fail "'dotnet --version' failed" }
+    $v = ([string]($raw | Select-Object -First 1)).Trim()
     if ($v -notmatch '^(\d+)\.') { Fail "cannot parse dotnet version '$v'" }
     if ([int]$Matches[1] -lt [int]$Pins['DOTNET_MIN_MAJOR']) { Fail "dotnet SDK $v found, need >= $($Pins['DOTNET_MIN_MAJOR']).x" }
     Write-Host "dotnet SDK $v"

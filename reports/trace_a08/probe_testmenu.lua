@@ -2,7 +2,7 @@
 KEEP = {}
 local m = manager.machine
 local scr = m.screens[":screen"]
-local SP = "/tmp/claude-0/-home-user-test/af2ad0ad-b38d-519b-aaa8-37707f74d539/scratchpad/seq3/"
+local SP = (os.getenv("A08_OUT") or "/tmp/a08_out") .. "/"
 local out = io.open("/home/user/test/reports/trace_a08/probe_testmenu_log.txt", "w")
 local f1 = m.ioport.ports[":IN1"].fields
 local f0 = m.ioport.ports[":IN0"].fields

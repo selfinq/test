@@ -11,6 +11,7 @@
                                        memory on that file in the one attempt recorded in reports/, so this is OFF by default)
       -p:RecompDir=<dir>               compile <dir>/*.cs instead (one directory only: several generated/recomp*
                                        directories define the same types and would collide)
+      -p:RecompExtraSources=<a.cs;b.cs>  extra source files compiled with the generated code (e.g. a test shim)
       -p:RecompRuntimeProject=<csproj> project the generated code needs (default: RecompOne.Runtime from the
                                        pinned checkout at ../work/recompone, see scripts/pins.cfg)
   -->
@@ -65,6 +66,9 @@
   </PropertyGroup>
   <ItemGroup Condition="'$(RecompDir)' != '' and Exists('$(RecompDir)')">
     <Compile Include="$(RecompDir)/*.cs" Link="recomp/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RecompDir)' != '' and '$(RecompExtraSources)' != ''">
+    <Compile Include="$(RecompExtraSources)" />
   </ItemGroup>
   <ItemGroup Condition="'$(RecompDir)' != '' and Exists('$(RecompRuntimeProject)')">
     <ProjectReference Include="$(RecompRuntimeProject)" />

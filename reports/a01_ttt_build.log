@@ -1,3 +1,10 @@
   Determining projects to restore...
   All projects are up-to-date for restore.
   RecompOne.Runtime -> /home/user/work/a01/recompone/RecompOne.Runtime/bin/Release/net10.0/RecompOne.Runtime.dll
+  TttBuild -> /home/user/work/ttt_build_a01/bin/Release/net10.0/TttBuild.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:06:51.89
