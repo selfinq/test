@@ -27,8 +27,13 @@
         <Compile Remove="@(S12Excluded->'%(Identity)/**')" />
     </ItemGroup>
 
+    <PropertyGroup>
+        <!-- Patched RecompOne checkout (scripts/setup.* creates it at ../work/recompone relative to the repo). Override: -p:RecompOneDir=... -->
+        <RecompOneDir Condition="'$(RecompOneDir)' == ''">$(MSBuildThisFileDirectory)../../../work/recompone</RecompOneDir>
+    </PropertyGroup>
+
     <ItemGroup>
-        <ProjectReference Include="/home/user/work/recompone/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+        <ProjectReference Include="$(RecompOneDir)/RecompOne.Runtime/RecompOne.Runtime.csproj" />
     </ItemGroup>
 
 </Project>

@@ -22,13 +22,18 @@
         <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
     </ItemGroup>
 
+    <PropertyGroup>
+        <!-- Patched RecompOne checkout; override with -p:RecompOneDir=... -->
+        <RecompOneDir Condition="'$(RecompOneDir)' == ''">$(MSBuildThisFileDirectory)../../../work/recompone</RecompOneDir>
+    </PropertyGroup>
+
     <ItemGroup Condition="'$(S12TestFullProject)' == 'true'">
         <ProjectReference Include="../System12.Runtime/System12.Runtime.csproj" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(S12TestFullProject)' != 'true'">
         <Compile Include="../System12.Runtime/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
-        <ProjectReference Include="/home/user/work/recompone/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+        <ProjectReference Include="$(RecompOneDir)/RecompOne.Runtime/RecompOne.Runtime.csproj" />
     </ItemGroup>
 
 </Project>

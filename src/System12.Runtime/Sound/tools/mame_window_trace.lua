@@ -10,7 +10,7 @@ emu.register_frame_done(function()
   local t = m.time:as_double()
   if (not started) and t >= t0 then
     started = true
-    d:command('trace ' .. out .. '/window_trace.txt,:sub,noloop,{tracelog "R=%x,%x,%x,%x,%x,%x,%x,%x C=%x T=%f ",er0,er1,er2,er3,er4,er5,er6,er7,ccr,0}')
+    d:command('trace ' .. out .. '/window_trace.txt,:sub,noloop,{tracelog "R=%x,%x,%x,%x,%x,%x,%x,%x C=%x T=%d ",er0,er1,er2,er3,er4,er5,er6,er7,ccr,totalcycles}')
     d:command("go")
   end
   if t >= t1 then m:exit() end
