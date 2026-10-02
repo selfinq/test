@@ -26,6 +26,14 @@ if tr then
   d:command(os.getenv("S12_TRACECMD") or ("trace " .. tr .. ",:sub,noloop"))
   d:command("go")
 end
+-- frames.txt: one line per frame_done (= start of vblank): time, frame period, time from there to vblank end.
+local fw = io.open(outdir .. "/frames.txt", "w")
+fw:setvbuf("line")
+local scr = m.screens[":screen"]
 local n = 0
-emu.register_frame_done(function() n = n + 1; if n % 600 == 0 then cw:flush(); sw:flush() end end)
+emu.register_frame_done(function()
+  n = n + 1
+  fw:write(string.format("%.9f %.9f %.9f\n", m.time:as_double(), scr.frame_period, scr:time_until_vblank_end():as_double()))
+  if n % 600 == 0 then cw:flush(); sw:flush() end
+end)
 emu.register_stop(function() cw:close(); sw:close(); ir:close() end)

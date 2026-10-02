@@ -104,11 +104,15 @@ public sealed class H8Cpu
         Sleeping = false; Halted = false;
         // advanced mode vector 0: 32-bit big-endian (upper byte reserved)
         PC = Read32(0) & 0xffffff;
+        States += 14; _ex = 0; // reset sequence (MAME: vector fetch + internal + prefetch, calibrated on the first C352 write time)
     }
 
     // ---- bus helpers ---------------------------------------------------------------------------------------
+    private int _ex; // extra states accumulated by bus accesses during the current instruction (MAME: 2 states per 16-bit-or-less access)
+
     private uint Read(uint addr, int size)
     {
+        _ex += size == 4 ? 4 : 2;
         addr &= 0xffffff;
         switch (size)
         {
@@ -120,6 +124,7 @@ public sealed class H8Cpu
 
     private void Write(uint addr, int size, uint v)
     {
+        _ex += size == 4 ? 4 : 2;
         addr &= 0xffffff;
         switch (size)
         {
@@ -161,7 +166,7 @@ public sealed class H8Cpu
         Push32PcCcr(PC);
         CCR |= maskBits;
         PC = Read32((uint)vector * 4) & 0xffffff;
-        States += 20;
+        States += 12; _ex = 0; // MAME: internal(1) + 2x write16 + 2x read16i + internal(1)
     }
 
     // ---- main step -------------------------------------------------------------------------------------------
@@ -199,8 +204,9 @@ public sealed class H8Cpu
         uint next = (pc + i.Len) & 0xffffff;
         PC = next;
         Instructions++;
+        _ex = 0;
         int extra = Execute(in i, pc, next);
-        States += i.Len + extra + 2;
+        States += i.Len + extra + _ex;
         return (int)(States - before);
     }
 
@@ -214,8 +220,8 @@ public sealed class H8Cpu
         switch (o.Mode)
         {
             case H8Mode.Ind: return ER[o.Reg] & 0xffffff;
-            case H8Mode.PostInc: post = true; return ER[o.Reg] & 0xffffff;
-            case H8Mode.PreDec: ER[o.Reg] -= (uint)size; return ER[o.Reg] & 0xffffff;
+            case H8Mode.PostInc: post = true; _ex += 2; return ER[o.Reg] & 0xffffff;
+            case H8Mode.PreDec: _ex += 2; ER[o.Reg] -= (uint)size; return ER[o.Reg] & 0xffffff;
             case H8Mode.Disp: return (ER[o.Reg] + (uint)o.Val) & 0xffffff;
             case H8Mode.Abs: return (uint)o.Val & 0xffffff;
             default: throw new InvalidOperationException("bad EA mode " + o.Mode);
@@ -402,7 +408,6 @@ public sealed class H8Cpu
                 uint v = ReadOp(in i.Src, sz);
                 SetNzv(v, sz);
                 WriteOp(in i.Dst, sz, v);
-                if (i.Src.Mode > H8Mode.Const || i.Dst.Mode > H8Mode.Const) extra += 2;
                 break;
             }
             case H8Op.Add:
@@ -578,7 +583,7 @@ public sealed class H8Cpu
                     if (sz == 1) SetReg(2, i.Dst.Reg, (q & 0xff) | ((r & 0xff) << 8));
                     else SetReg(4, i.Dst.Reg, (q & 0xffff) | ((r & 0xffff) << 16));
                 }
-                extra += sz == 1 ? 12 : 20;
+                extra += 12; // MAME divxu.b/.w: internal(11)
                 break;
             }
             case H8Op.Divxs:
@@ -600,26 +605,31 @@ public sealed class H8Cpu
 
             case H8Op.Bcc:
                 if (Cond(i.Cond)) PC = (uint)i.Dst.Val;
+                extra += 2; // MAME bxx_any: extra read16i of the branch target in both outcomes
                 break;
             case H8Op.Jmp:
                 PC = JumpTarget(in i.Src);
+                extra += i.Src.Mode == H8Mode.Mem ? 4 : 2;
                 break;
             case H8Op.Jsr:
             {
                 uint t = JumpTarget(in i.Src);
                 PushReturn(next);
                 PC = t;
+                extra += 2;
                 break;
             }
             case H8Op.Bsr:
                 PushReturn(next);
                 PC = (uint)i.Dst.Val;
+                extra += 2;
                 break;
             case H8Op.Rts:
             {
                 uint sp = ER[7];
                 PC = Read(sp, 4) & 0xffffff;
                 ER[7] = sp + 4;
+                extra += 4;
                 break;
             }
             case H8Op.Rte:
@@ -629,6 +639,7 @@ public sealed class H8Cpu
                 CCR = (byte)(w >> 8);
                 PC = (((w & 0xff) << 16) | Bus.Read16((sp + 2) & 0xffffff)) & 0xffffff;
                 ER[7] = sp + 4;
+                extra += 8;
                 break;
             }
             case H8Op.Trapa:
@@ -671,12 +682,13 @@ public sealed class H8Cpu
     {
         if (o.Mode == H8Mode.Reg) { ea = 0; return GetReg(1, o.Reg); }
         ea = o.Mode == H8Mode.Ind ? ER[o.Reg] & 0xffffff : (uint)o.Val & 0xffffff;
+        _ex += 2;
         return Bus.Read8(ea);
     }
 
     private void WriteBitTarget(in H8Operand o, uint ea, byte v)
     {
-        if (o.Mode == H8Mode.Reg) SetReg(1, o.Reg, v); else Bus.Write8(ea, v);
+        if (o.Mode == H8Mode.Reg) SetReg(1, o.Reg, v); else { _ex += 2; Bus.Write8(ea, v); }
     }
 
     private uint JumpTarget(in H8Operand o)

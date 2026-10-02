@@ -59,15 +59,15 @@ Notes for the runtime:
 * Input edges: `intin0` (GPU vblank, bit 0), `intin3` (DMA, bit 3), `intin4/5/6` (root counters 0/1/2), `intin7/8` (SIO0/1); each only acts on a rising `state=1` and ORs its bit into I_STAT (irq:108-157).
 * **Write semantics (MAME, differs from hardware documentation):** `I_STAT = (I_STAT & ~mem_mask) | (I_STAT & I_MASK & data)` (irq:73). Software acknowledges by writing 0 to the bit, as on a PS1, but a write also silently drops any *pending-but-masked* bit even when `data` has a 1 there (the kernel's `sw 0xffffffff` at PC `0x296c` is therefore not a no-op in MAME). `I_MASK = (I_MASK & ~mem_mask) | data` (irq:78). A 16-bit write only affects its half-word lane.
 * Observed use (`lua:final_checks.txt`, 1500 frames, fresh NVRAM): `I_MASK` values `0x00` (critical sections, 2832 writes), `0x01`, `0x09` (VBLANK|DMA, 818), `0x29` (VBLANK|DMA|RC1, 2012+). Acks: `0xfffffffe` (VBLANK, 1129), `0xfffffff7` (DMA, 5025), `0xffffffdf` (RC1, 716), `0xffffffff` (kernel, 6566). In the separate 1800-frame run (`lua:access_trace_1800.txt`) `I_STAT` was read ~203 k times and `I_MASK` ~236 k times (busy waits in the SDK).
-* Compared with PS1: same bit assignment for bits 0-8; CD (bit 1), SPU (bit 9) and PIO (bit 10) sources do not exist.
+* Compared with PS1: same bit assignment; the PS1 sources GPU-IRQ1 (bit 1), CD-ROM (bit 2), SPU (bit 9) and PIO (bit 10) are not wired, so only bits 0,3,4,5,6,7,8 can ever be set (bit 1 is outside MAME's `PSX_IRQ_MASK`).
 
 ## 4. Vertical blank and frame timing
 
-* `psxgpu::set_cpu` connects `vblank_callback -> psxirq::intin0` (gpu:50). `psxgpu::vblank(state)` toggles GPUSTAT bit 13 (interlace field) and calls the handler **only on the rising edge** (gpu:3450-3466): one `I_STAT.0` per frame.
+* `psxgpu::set_cpu` connects `vblank_callback -> psxirq::intin0` (gpu:50). `psxgpu::vblank(state)` updates GPUSTAT bit 13 and calls the handler **only on the rising edge** (gpu:3450-3466): one `I_STAT.0` per frame.
 * The driver additionally routes the screen's vblank (both edges) to the sound CPU: `SCREEN(...).screen_vblank().set(namcos12_sub_irq)` (drv:1170) -> H8 IRQ1 asserted at vblank start and cleared at vblank end, H8 ADC trigger, and bit 7 of H8 port B (drv:1412-1417).
 * Frame rate is derived from the GPU display mode (gpu:378-455): NTSC 240-line `59.8260978565 Hz`, NTSC 480-line `59.9400523286 Hz`, PAL `50 Hz`. Observed frame period `0.016715113 s` (59.8261 Hz) at 256x240 and 640x240 (`lua:vbl.txt`). Screen sizes seen: 256x240 at frames 5-100 and 1000, 640x240 at frames 380-700 (display mode is changed by the game). Nominal: 640x480 raster (`reports/mame_ref/listxml.txt:227`).
 * Vblank duration: **HYPOTHESIS** ~2.5 ms (`set_vblank_time(2500 us)`, gpu:3514, applied only if the screen was not configured; not measured).
-* The game uses one VBLANK interrupt per frame plus root counter 1 (hblank-sourced, see 6) as a raster timer; the DMA channel interrupt is used for ROM and GPU transfers.
+* The game uses one VBLANK interrupt per frame plus root counter 1 (hblank-sourced, see section 7) as a raster timer; the DMA channel interrupt is used for ROM and GPU transfers.
 
 ## 5. DMA controller (psxdma) and the channel assignment
 
@@ -79,7 +79,7 @@ instantaneous (no bus cycles) except for the completion timers listed below. `MA
 |---|---|---|---|---|
 | 0 | MDEC in (`dma_write`) | `0x01000201` (block, RAM->dev) - game: 581 times | data written to MDEC immediately; flag+IRQ immediate | dma:288-296; cpu:3469-3470; lua:access_trace_1800 |
 | 1 | MDEC out (`dma_read`) | `0x01000200` (block, dev->RAM) - game: 579 | data read immediately; **completion flag/IRQ after 26000 x 33.8688 MHz ticks (0.77 ms)** | dma:278-287 |
-| 2 | GPU (`dma_write`/`dma_read`) | `0x01000201` block write (11.7 k), `0x01000401` linked list (1967), `0x01000200` read | block: immediate; list: walks the whole list immediately (stops at `0xffffff`, restarts after 16000 ticks if >65535 words) | dma:288-300, 312-319, 141-186 |
+| 2 | GPU (`dma_write`/`dma_read`) | `0x01000201` block write and `0x01000401` linked list (CHCR written 12,497 times in 1800 frames; 1967 list starts in the 1500-frame run); `0x01000200` read is supported but not observed | block: immediate; list: walks the whole list immediately (stops at `0xffffff`, restarts after 16000 ticks if >65535 words) | dma:288-300, 312-319, 141-186 |
 | 3 | CD | none (no handler) | "unknown mode" ignored | - |
 | 4 | SPU | none | ignored | - |
 | 5 | **ROM read** (driver `namcos12_rom_read`) | `0x01000000` (game: 8089 times); MAME also accepts `0x01000200` and `(v & 0xffbffeff)==0x11000000` | copy done **immediately inside the CHCR write**, flag/IRQ immediate | drv:1161, 1310-1365; dma:258-277 |
@@ -120,6 +120,7 @@ words = min(words, ram_bytes/4 - MADR/4)                                  # clam
 RAM[MADR .. MADR+4*words) = region[offset .. offset+4*words)              # byte for byte, little-endian regions
 ```
 (`offset/2` uses halfword units: an odd byte offset is truncated; the game always aligns to 4.)
+**Independently verified** (`lua:dma_verify.txt`): re-implementing exactly this rule in Lua from the observed register writes and comparing against the RAM MAME produced gave 7634 DMA5 transfers in 1200 frames (7523 banked-ROM/armed, 111 main-ROM), **7634 identical, 0 mismatching**, largest transfer 14,652 words, no clamping events.
 Observed chunking: a 1-word header read into `0x803fffa8`, then the payload (BCR `0x6a0`, `0x52`, `0x10`, ...); the loader limits one chunk to `0x20000` bytes (`img:0x8012e4e4-0x8012e4f8`). Totals in 1800 frames: 8089 DMA5 starts = 7978 armed banked-ROM reads + 111 main-ROM reads; 8181 strobe writes to `0x1f008000`.
 
 ### 6.3 Protection challenge/response (`tektagt_protection_*`)
@@ -156,6 +157,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 * Reset state `GPUSTAT=0x14802000`; the display mode GP1(08) selects width 256/320/368/384/512/640, 240/480 lines, NTSC/PAL (gpu:378-455) and reconfigures the MAME screen (hence frame rate). GPUSTAT bit 31 (odd line/field) is synthesised from the screen position (gpu:3438-3442). GPUSTAT is polled 63,694 times in 1800 frames.
 * DMA: ch2 handlers `dma_write` (RAM->VRAM block and linked list) and `dma_read` (gpu:46-49); ch6 OTC is built into `dma.cpp`.
 * Clock: the GPU device is created with `100 MHz / 2` and `vclkn = 53.693175 MHz` (drv:1127, 1166); the only effect MAME derives from them is the refresh rates above.
+* VRAM usage by the game (rows >= 512 used, e.g. as FMV double buffer), the GPU/MDEC/GTE adapters and the reusable-vs-must-change analysis are in the sibling document [`GPU.md`](GPU.md) (written by another agent; this document only fixes the register-level facts).
 * **PS1 differences:** VRAM size/geometry, the two-bank texture page, GP1(09). The rasteriser, FIFOs and DMA are otherwise the same *model*; MAME's software rasteriser is not cycle accurate.
 
 ## 9. GTE and MDEC
@@ -175,7 +177,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 
 * 2048 data bytes (+32 ID bytes only reachable with A9=12 V, not wired here). Lane mapping: byte index `i` <-> physical `0x1f140000 + 2*i`, data on byte lanes 0 and 2; verified by the build-info string at EEPROM index `0x280` appearing at `0x1f140500` (`lua:access_trace_1800.txt`, `lua:eeprom_trace.txt`).
 * Behaviour (at28:147-203): a write is ignored while busy; it only stores if the byte differs from the current cell and then starts a **200 us busy period** (`write_complete` timer); while busy any read returns `last_written ^ 0x80` (data polling); the erase mode (`oe_12v`) is not wired. Power-up contents `0xff`; backing file `at28c16` is 2080 bytes (`0x820`).
-* Game: first boot with blank NVRAM writes ~220 bytes at index `0x280..` (frames 382-390, `lhu/sh` per byte, polling by repeated reads: 1760 reads / 220 writes) - bytes `"22:20:05, JUN 1"`, `00`, `"TEG2"`, ... (`0x280-0x35b`, last write at frame 385). Longer runs (3000 frames) also showed random-looking blocks at `0x380-0x4c1`, `0x580-0x789`, `0x7c0-0x7d1`, written later in attract mode (observed in an NVRAM file from a longer run; not traced). Subsequent boots read first. **Traces must start from a saved NVRAM copy** (see `STATUS.json` facts).
+* Game: first boot with blank NVRAM writes ~220 bytes at index `0x280..` (frames 382-385, `lhu/sh` per byte, polling by repeated reads: 1760 reads / 220 writes) - bytes `"22:20:05, JUN 1"`, `00`, `"TEG2"`, ... (`0x280-0x35b`, last write at frame 385). Longer runs (3000 frames) also showed random-looking blocks at `0x380-0x4c1`, `0x580-0x789`, `0x7c0-0x7d1`, written later in attract mode (observed in an NVRAM file from a longer run; not traced). Subsequent boots read first. **Traces must start from a saved NVRAM copy** (see `STATUS.json` facts).
 
 ### 11.2 Shared RAM with the H8 (`0x1f080000-0x1f083fff`)
 
@@ -183,7 +185,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 
 ### 11.3 Write-only strobes and the ROM-board port
 
-`0x1f008000` (once per DMA chunk), `0x1f018000` (1.1 M halfword-0 writes, poked inside polling loops), `0x1f010000` (never), `0x1f1bff08-0f` (boot ROM streams ~1 M halfwords of ROM data into `+0x0e`, terminators 3/1 at `+0x0c/+0x0a`, game repeats the terminators). MAME maps all of them as `nopw`; the game never reads them back. Purposes are **HYPOTHESES** (watchdog kick, ROM-board chip select/handshake to the KEYCUS CPLD). A replacement may ignore the writes but should keep the boot ROM's 1 M-store loop from stalling (it is ~1 M instructions, ~40 ms of emulated time).
+`0x1f008000` (once per DMA chunk), `0x1f018000` (1.1 M halfword-0 writes, poked inside polling loops), `0x1f010000` (never), `0x1f1bff08-0f` (boot ROM streams ~1 M halfwords of ROM data into `+0x0e`, terminators 3/1 at `+0x0c/+0x0a`, game repeats the terminators). MAME maps all of them as `nopw`; the game never reads them back. Purposes are **HYPOTHESES** (watchdog kick, ROM-board chip select/handshake to the KEYCUS CPLD). A replacement may ignore the writes; note the boot ROM's 1 M-iteration copy loop (6 instructions per iteration, ~6 M instructions = ~0.25 s at MAME's 25 M instr/s).
 
 ### 11.4 POST / expansion-2 area
 
@@ -192,7 +194,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 ## 12. Sound / input subsystem (H8/3002 board) - interface only
 
 * H8/3002 @16.9344 MHz, program ROM 512 KB (`teg1.11s`, `ROM_LOAD16_WORD_SWAP`), RAM 64 KB shared, C352 at `0x280000-0x287fff` (88.2 kHz output, 16 MB wave ROM `teg1_wave0/1`), inputs at `0x300000-3` (drv:1173-1216, 1275-1282). The main CPU talks to it only through shared RAM and the vblank IRQ it gets from the screen.
-* Port wiring (drv:1175-1186, 1367-1417): P6 read bit1 = "no JVS I/O board" (idle `0xff`), P7 = DIP switches (`0xff3f` idle: bit7 service mode off, bit6 freeze off), P8 read `0xef` idle (master) / `0x02` (0.264), PA/PB select the RTC4543 (PA0=1, PB5=1) or the NAMCO_SETTINGS serial chip (PA0=0, PB5=1) on SCI1, PB0 -> JVS RTS, PB7 mirrors vblank, ADC0-3 return 0, SCI0 is the JVS link (no device present, so inputs come from the JAMMA-style `in_r`).
+* Port wiring (drv:1175-1186, 1367-1417): P6 read bit1 = "no JVS I/O board" (idle `0xff`), P7 = DIP switches (idle `0xff`: bit7 service mode off, bit6 freeze off, bits 5-0 unused/1), P8 read `0xef` idle (master) / `0x02` (0.264), PA/PB select the RTC4543 (PA0=1, PB5=1) or the NAMCO_SETTINGS serial chip (PA0=0, PB5=1) on SCI1, PB0 -> JVS RTS, PB7 mirrors vblank, ADC0-3 return 0, SCI0 is the JVS link (no device present, so inputs come from the JAMMA-style `in_r`).
 * Input layout, active low, H8 `0x300000..3` = `P2, P1, system, buttons2`: see `address_map.json` row `H8_IN`. Idle value `0xffff` for both words (`lua:mainview.txt`), polled ~2 times/frame (`sub R 300000 n=3590`, `300002 n=7184`).
 * RTC4543 (32.768 kHz) and the settings shift register are only reachable from the H8; the main CPU never sees them directly.
 * **PS1 difference:** there is no SPU; sound = H8 program + C352 PCM, i.e. a second CPU that must be emulated or replaced by an HLE of its mailbox protocol (outside this document).
@@ -205,7 +207,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 | BIOS/kernel | 512 KB BIOS ROM at `0xbfc00000`, HLE in RecompOne (`Bios/`) | 4 MB game-specific ROM, own Sony-style kernel copied to RAM, no PS1 BIOS |
 | RAM | 2 MB (`MemoryMap.RetailRamSize`), 8 MB window | 4 MB, bus error above |
 | Expansion 1/3 | open | bank register, strobes, shared RAM, EEPROM, DMA offset, protection, 2 MB bank window |
-| IRQ controller | 11 sources, `stat &= data` | 9 sources, MAME `stat &= mask & data` quirk |
+| IRQ controller | 11 sources, `stat &= data` | 7 wired sources (bits 0,3,4,5,6,7,8), MAME `stat & mask & data` quirk |
 | DMA | ch5 unused, CD/SPU DMA | ch5 = ROM, ch3/4 dead, instantaneous transfers |
 | Root counters | same | same (counter 1 as raster timer) |
 | GPU | CXD8514Q 1 MB | CXD8654Q 2 MB, GP1(09), texture bank bit |
@@ -227,6 +229,7 @@ Observed in 1800 frames (`lua:final_checks.txt`): frame 370 `(806d2c24,d5545715)
 | RAM alias/window, final RAM_SIZE/ROM_CFG/BIU | read-back at frame 700 | `lua:final_checks.txt` |
 | Shared RAM mapping, EEPROM lanes | cross-CPU read/write | `lua:mainview.txt` |
 | DMA/protection protocol, IRQ patterns | tap traces | `lua:final_checks.txt`, `lua:access_trace_1800.txt` |
+| ROM-DMA source/offset/copy rule | independent re-implementation vs MAME RAM, 7634/7634 identical | `lua:dma_verify.txt` |
 | EEPROM first-boot writes | tap trace, fresh NVRAM | `lua:eeprom_trace.txt` |
 | Frame period | `screen.frame_period` | `lua:vbl.txt` |
 | Static code facts (`img:`/`rom:`) | capstone disassembly of the two images | - |

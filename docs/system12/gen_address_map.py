@@ -179,7 +179,7 @@ MAIN = [
     dict(id="HW_MISC2", lo=0x1f801064, hi=0x1f80106f, dev="plain RAM", rw="RW", width="32", notes="", ev=["cpu:1776"], st="V-drv"),
     dict(id="IRQ", lo=0x1f801070, hi=0x1f801077, dev="Interrupt controller I_STAT (+0) / I_MASK (+4)", rw="RW32", width="32",
          notes="Write I_STAT: new = (stat & ~mem_mask) | (stat & mask & data) - NOTE MAME clears pending bits that are not in "
-               "I_MASK on any write (real PS1: stat &= data). Write I_MASK: new = (mask & ~mem_mask) | data (bit 1 'CD' and bits "
+               "I_MASK on any write (real PS1: stat &= data). Write I_MASK: new = (mask & ~mem_mask) | data (bits outside 0x7fd, i.e. bit 1 and bits "
                ">10 flagged unknown but kept). Output: (stat & mask) != 0 asserts CPU IRQ0 = COP0 Cause.IP2 (level, "
                "re-evaluated on every stat/mask change). Sources: bit0 VBLANK(GPU), bit3 DMA, bit4/5/6 root counters 0/1/2, "
                "bit7 SIO0, bit8 SIO1. Observed mask values 0x00, 0x01, 0x09, 0x29.",
@@ -368,6 +368,7 @@ DOC["rom_dma"] = {
     "copy": "RAM[MADR .. +4*n) = region[offset .. +4*n) byte for byte (regions are little-endian 32-bit)",
     "post": "m_has_tektagt_dma = false (always, even for main ROM reads)",
     "evidence": ["drv:1310-1365", "drv:1161", "dma:258-264", "img:0x8012e4a0-0x8012e590", "lua:final_checks.txt"],
+    "independent_verification": "lua:dma_verify.txt - the rule above was re-implemented in Lua from the observed register writes only (PROT1 value, 0x1f70xxxx writes, PROT3 arming read, EXP1_BASE, MADR, BCR) and compared word for word with the RAM MAME produced: 7634 DMA5 transfers (7523 banked/armed + 111 main-ROM), 7634 identical, 0 mismatching, 0 clamped, largest transfer 14652 words, over 1200 frames.",
     "observed_chunking": "Loader reads a 1-word header into 0x803fffa8 (BCR=1) and then the payload (BCR up to 0x81f words seen, max chunk 0x20000 bytes); 8089 DMA5 starts in 1800 frames.",
 }
 
@@ -390,7 +391,7 @@ DOC["tektagt_protection"] = {
 }
 
 DOC["interrupts"] = {
-    "psx_irq_bits": {"0": "VBLANK (GPU vblank start, edge)", "1": "CD-ROM (unused)", "2": "unused", "3": "DMA (DICR master flag)", "4": "root counter 0", "5": "root counter 1", "6": "root counter 2", "7": "SIO0", "8": "SIO1", "9": "SPU (not present)", "10": "PIO (not present)"},
+    "psx_irq_bits": {"0": "VBLANK (GPU vblank start, edge)", "1": "GPU IRQ1 on a PS1 (not wired; outside MAME PSX_IRQ_MASK 0x7fd)", "2": "CD-ROM on a PS1 (not wired)", "3": "DMA (DICR master flag)", "4": "root counter 0", "5": "root counter 1", "6": "root counter 2", "7": "SIO0", "8": "SIO1", "9": "SPU (not present)", "10": "PIO (not present)"},
     "used_by_game": ["bit0 VBLANK", "bit3 DMA", "bit5 root counter 1 (hblank-based raster timer)"],
     "cpu_line": "psxirq.irq -> maincpu IRQ0 -> Cause.IP2, level = ((I_STAT & I_MASK) != 0)",
     "vblank": {

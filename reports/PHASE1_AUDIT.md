@@ -30,3 +30,10 @@ Devices per -listxml: main CPU Sony CXD8661R @100 MHz, sound CPU Hitachi H8/3002
   writes the game image to 0x80010000 (nonzero RAM grows ~8 KB/frame). At frame 367 PC first lands in RAM; entry word @0x1fc2401c = 0x80010000.
 - Bank register 0x1f000000 and protection windows 0x1fb00000..0x1fb80003: 0 write-tap hits in 4000 frames (taps do not see direct-RAM writes, so RAM-write taps are not evidence).
 - Banked ROM data is read later via other paths (RAM blocks from bankedroms seen near 0x3eff54, 0x3f3a70) - mechanism NOT yet identified.
+
+## CORRECTION (from agent03, evidence in reports/trace_a03/tapdbg.lua, dma_verify.lua)
+My earlier statement that bank/protection write taps had 0 hits ("taps do not see direct-RAM writes") was INCOMPLETE/WRONG as an explanation:
+MAME 0.264 silently drops Lua memory taps on the 0x1f80xxxx / 0x1fxxxxxx range around frame 360; calling `handle:reinstall()` every frame fixes it.
+Traces from earlier steps that relied on such taps after frame 360 are incomplete. The game never writes the bank register 0x1f000000; banked ROM is read via
+DMA channel 5 (offset written at 0x1fb00000, arm by reading 0x1f700000, CHCR 0x01000000). A Lua re-implementation of the copy rule matched MAME's RAM in 7,634/7,634 transfers.
+Byte order of 'maincpu:rom' and 'bankedroms' regions: MAME's loaded regions are byte-identical to generated/regions/*.bin (closes the LOAD32_WORD open item for those two; 'sub' and 'c352' not compared).

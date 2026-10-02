@@ -39,7 +39,7 @@
   "not_run": [
     "any recompilation",
     "any differential test against MAME execution",
-    "build_regions LOAD32_WORD in-word byte order vs MAME on real data (only structurally validated)"
+    "byte order of regions 'sub' and 'c352' vs MAME (maincpu:rom and bankedroms confirmed identical)"
   ],
   "phase2_mame": "PASS (partial): -listxml rc=0, -listroms rc=0; manifest identical to MAME 0.264 listroms (15/15). See reports/mame_ref/",
   "facts": {
@@ -57,5 +57,11 @@
     "function detector must stop at jumps/returns followed by data (huge functions, 761k [Unknown] words)",
     "coverage check against MAME-executed PCs",
     "System 12 runtime: memory map, banked ROM + DMA + protection (0x1f700000/0x1fb00000/0x1fb80000), MMIO, GPU/GTE reuse, H8/3002 + C352 sound, JVS/coin/EEPROM"
-  ]
+  ],
+  "agent_reports": {
+    "agent01": "detector fixed (strict mode via env var; 1865 fns; compiles with test-only Bios shim)",
+    "agent03": "address map spec + dma5 verified 7634/7634",
+    "agent05": "System12Memory + 63 tests",
+    "agent06": "GPU 2MB VRAM, 0 px mismatch vs MAME snapshots; patch 0004 proposal"
+  }
 }
