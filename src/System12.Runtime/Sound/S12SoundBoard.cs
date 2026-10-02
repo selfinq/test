@@ -39,16 +39,23 @@ public sealed class S12SoundBoard : IH83002Board
 
     // --- vblank source -------------------------------------------------------------------------------------------
     public bool ExternalVBlank;                        // true: host calls SetVBlank()
-    public double FramePeriodSeconds = 0.016715113;    // MAME tektagt boot-time screen (256x240)
+    public double FramePeriodSeconds = 0.016715113234; // MAME tektagt screen (256x240, 59.8261 Hz): frame_period = 16.715113234 ms
     public double VBlankSeconds = 0.0025;
-    private long _nextVblankStart, _nextVblankEnd;
+    private long _nextVblankStart, _nextVblankEnd, _frameIndex;
     private bool _vblank;
 
     // --- ports / RTC ------------------------------------------------------------------------------------------------
     private byte _portA, _portB = 0x50;
     private readonly Rtc4543 _rtc = new();
-    private bool _jvsSense;
-    public DateTime RtcStart = new DateTime(1999, 11, 1, 12, 0, 0, DateTimeKind.Unspecified);
+    /// <summary>Port 6 bit 1 ("JVS cable present", 0.264 s12_mcu_p6_r). No JVS device is emulated, so this stays false unless the host sets it.</summary>
+    public bool JvsSense;
+
+    /// <summary>
+    /// Set the real-time-clock chip's current time (read by the firmware over SCI1 at boot and exported to the main CPU).
+    /// The default is a fixed date so that runs are reproducible; a runtime wanting wall-clock time calls SetRtc(DateTime.Now).
+    /// Note: the firmware branches on the RTC year (>= 0x70 is treated as 19xx), so the value is observable in its control flow.
+    /// </summary>
+    public void SetRtc(DateTime time) => _rtc.SetTime(time, Mcu.Cpu.States);
 
     // --- audio ---------------------------------------------------------------------------------------------------------
     private long _audioFramesDone;
@@ -64,12 +71,15 @@ public sealed class S12SoundBoard : IH83002Board
         if (subProgram.Length != 0x80000) throw new ArgumentException("sub program must be 512 KiB");
         Chip = new C352(c352Rom);
         Mcu = new H83002(subProgram, this);
-        _rtc.SetTime(RtcStart);
-        _nextVblankStart = (long)(FramePeriodSeconds * H83002.ClockHz);
+        _rtc.SetTime(new DateTime(2026, 10, 2, 5, 8, 35, DateTimeKind.Unspecified), 0);
+        _nextVblankStart = FrameStart(1);
         _nextVblankEnd = long.MaxValue;
     }
 
     public long Now => Mcu.Cpu.States;
+
+    // frame n starts at floor(n * period * clock): MAME converts attotime to cycles by truncation (verified on the traces)
+    private long FrameStart(long n) => (long)Math.Floor(n * FramePeriodSeconds * H83002.ClockHz + 1e-4);
 
     // ---- main CPU window ------------------------------------------------------------------------------------------------
     /// <summary>Main CPU 16-bit read at byte offset 'off' (even) in the 0x1f080000-0x1f083fff window.</summary>
@@ -81,6 +91,20 @@ public sealed class S12SoundBoard : IH83002Board
         ushort cur = (ushort)((_shared[off] << 8) | _shared[off + 1]);
         cur = (ushort)((cur & ~mask) | (value & mask));
         _shared[off] = (byte)(cur >> 8); _shared[off + 1] = (byte)cur;
+    }
+
+    /// <summary>
+    /// Main-CPU 32-bit bus read at byte offset 'off' (multiple of 4) of the 0x1f080000-0x1f083fff window. The 16-bit shared-RAM handler
+    /// answers on both halfword lanes: low half = H8 word at 0x080000+off, high half = H8 word at 0x080000+off+2 (verified: the main CPU
+    /// writes its heartbeat to the high half of 0x1f0830f0 and the H8 firmware polls 0x0830f2).
+    /// </summary>
+    public uint MainRead32(int off) => (uint)(MainRead16(off) | (MainRead16(off + 2) << 16));
+
+    /// <summary>Main-CPU 32-bit bus write with byte-lane mask (e.g. 0xffff0000 for a halfword store to the upper lane).</summary>
+    public void MainWrite32(int off, uint data, uint mask = 0xffffffff)
+    {
+        if ((mask & 0xffff) != 0) MainWrite16(off, (ushort)data, (ushort)mask);
+        if ((mask >> 16) != 0) MainWrite16(off + 2, (ushort)(data >> 16), (ushort)(mask >> 16));
     }
 
     /// <summary>Direct view of the shared RAM (H8 offsets 0x080000..0x08ffff).</summary>
@@ -114,7 +138,8 @@ public sealed class S12SoundBoard : IH83002Board
                 {
                     SetVBlank(true);
                     _nextVblankEnd = _nextVblankStart + (long)(VBlankSeconds * H83002.ClockHz);
-                    _nextVblankStart += (long)(FramePeriodSeconds * H83002.ClockHz);
+                    _frameIndex++;
+                    _nextVblankStart = FrameStart(_frameIndex + 1);
                 }
                 else if (_vblank && Mcu.Cpu.States >= _nextVblankEnd)
                 {
@@ -212,7 +237,7 @@ public sealed class S12SoundBoard : IH83002Board
     {
         switch (port)
         {
-            case 6: return (byte)((_jvsSense ? 2 : 0) | 0xfd);
+            case 6: return (byte)((JvsSense ? 2 : 0) | 0xfd);
             case 7: return Dsw;
             case 8: return 0x02;
             case 10: return _portA;
@@ -271,7 +296,7 @@ public sealed class S12SoundBoard : IH83002Board
         private long _stateBase;
         private const long StatesPerSecond = H83002.ClockHz;
 
-        public void SetTime(DateTime t) { _time = t; _stateBase = 0; Load(); }
+        public void SetTime(DateTime t, long nowStates) { _time = t; _stateBase = nowStates; Load(); }
         public void SetCe(bool ce)
         {
             if (ce && !_ce) _curbit = 0;

@@ -5,17 +5,24 @@
 // Declared EMULATED COMPONENT: this core executes the unmodified System 12 sound-CPU program (sub.bin, the
 // H8/3002 firmware shipped in the game's ROM set). It is not a high-level re-implementation of that firmware.
 //
-// Provenance: written for this project from the H8/300H programming manual (instruction semantics and
-// condition-code rules) and CROSS-CHECKED, instruction by instruction, against MAME's h8 core
-// (src/devices/cpu/h8/h8.cpp, h8.lst; license BSD-3-Clause, copyright-holders Olivier Galibert) by comparing
-// register/CCR traces produced by MAME 0.264 for the actual firmware. Flag formulas for add/sub/shift/rotate/
-// inc/dec and multiply/divide flag behaviour follow MAME (credited above); where this core and MAME were found
-// to disagree, MAME's behaviour was adopted (the test-suite lists what was compared).
+// Provenance: written for this project from the H8/300H programming manual's instruction set (opcode layout,
+// condition-code rules) and CROSS-CHECKED against MAME's h8 core (src/devices/cpu/h8/h8.cpp, h8.lst, h8d.cpp;
+// license BSD-3-Clause, copyright-holders Olivier Galibert), whose behaviour was adopted wherever the two differ:
+// flag formulas for add/sub/addx/subx/inc/dec/neg, shift/rotate flags, mulxu/mulxs/divxu/divxs flag behaviour,
+// daa/das, the "no interrupt sampling after ldc/andc/orc/xorc" rule and the per-instruction bus-cycle ordering.
 //
-// NOT implemented: H8S-only instructions (EXR, 2-bit shifts, ldm/stm, mac, tas), normal (16-bit) mode,
-// software standby, bus-error/illegal-instruction exceptions beyond halting, cycle-exact timing
-// (state counts are an approximation, see EstimateStates), byte accesses through ER7 auto-increment/decrement
-// (treated as +/-size, hardware uses 2).
+// Verification performed (details and numbers in docs/system12/SOUND.md "Verification"):
+//  * linear disassembly of the whole 512 KiB program ROM equals MAME's disassembler output at 255,820 positions;
+//  * ~5 million instruction states traced from MAME 0.264 (pre-instruction ER0-ER7/CCR/PC and total cycles) were replayed one
+//    instruction at a time through this core: registers, CCR and PC after each instruction are identical, and the
+//    per-instruction cycle cost is identical (including the order in which a bus access happens inside an instruction);
+//  * the same traces cover every one of the 63 distinct mnemonics that sub.bin executes in 40 s of attract mode.
+// Instructions that sub.bin never executes are implemented but only unit-tested (SoundSelfTests), not oracle-tested.
+//
+// NOT implemented: H8S-only instructions (EXR, 2-bit shifts, ldm/stm, mac, tas), movfpe/movtpe, normal (16-bit address)
+// mode, software standby, illegal-instruction exceptions (the CPU halts and reports LastIllegalPc), and byte accesses
+// through ER7 post-increment/pre-decrement (treated as +/-1; real hardware adjusts SP by 2 - sub.bin only uses word/long
+// stack accesses).
 
 using System;
 
@@ -27,6 +34,9 @@ public interface IH8Bus
     ushort Read16(uint addr);
     void Write8(uint addr, byte value);
     void Write16(uint addr, ushort value);
+    /// <summary>Called by the CPU before every bus micro-operation so that time-driven peripherals can process events that are due
+    /// (MAME checks its event horizon after each micro-op of an instruction, not only at instruction boundaries).</summary>
+    void Tick();
 }
 
 public interface IH8InterruptSource
@@ -48,7 +58,7 @@ public sealed class H8Cpu
     public byte CCR;
     public bool Sleeping;
     public bool Halted;            // illegal instruction encountered
-    public long States;            // approximate CPU state count
+    public long States;            // CPU state (phi cycle) count; bus accesses are charged before they happen
     public long Instructions;
     public IH8Bus Bus;
     public IH8InterruptSource? Interrupts;
@@ -104,15 +114,20 @@ public sealed class H8Cpu
         Sleeping = false; Halted = false;
         // advanced mode vector 0: 32-bit big-endian (upper byte reserved)
         PC = Read32(0) & 0xffffff;
-        States += 14; _ex = 0; // reset sequence (MAME: vector fetch + internal + prefetch, calibrated on the first C352 write time)
+        States += 2; // reset sequence: 4 (vector read, charged by Read32) + 2 (prefetch) = 6 states, as in MAME's debugger trace (first instruction at T=6)
     }
 
     // ---- bus helpers ---------------------------------------------------------------------------------------
-    private int _ex; // extra states accumulated by bus accesses during the current instruction (MAME: 2 states per 16-bit-or-less access)
+    private bool _psEarly; // the current operation already charged the next-instruction prefetch (MAME 'prefetch_start' precedes the data access)
 
+    // Timing model (calibrated against MAME's h8 core): every bus access costs 2 states (a 32-bit access = 2 accesses),
+    // charged BEFORE the access happens, so peripherals that look at States see the same access time as MAME.
+    // An instruction costs 2 states per instruction word + its data accesses + 'internal' cycles; the first word's
+    // fetch is paid at the end of the previous instruction (see Step).
     private uint Read(uint addr, int size)
     {
-        _ex += size == 4 ? 4 : 2;
+        Bus.Tick();
+        States += size == 4 ? 4 : 2;
         addr &= 0xffffff;
         switch (size)
         {
@@ -124,7 +139,8 @@ public sealed class H8Cpu
 
     private void Write(uint addr, int size, uint v)
     {
-        _ex += size == 4 ? 4 : 2;
+        Bus.Tick();
+        States += size == 4 ? 4 : 2;
         addr &= 0xffffff;
         switch (size)
         {
@@ -166,11 +182,11 @@ public sealed class H8Cpu
         Push32PcCcr(PC);
         CCR |= maskBits;
         PC = Read32((uint)vector * 4) & 0xffffff;
-        States += 12; _ex = 0; // MAME: internal(1) + 2x write16 + 2x read16i + internal(1)
+        States += 10; // + 4 for the vector read = 14 total; MAME: internal(1) + 2x write16 + 2x read16i + internal(1) + prefetch of the handler's first word
     }
 
     // ---- main step -------------------------------------------------------------------------------------------
-    /// <summary>Execute one instruction (or take one pending interrupt). Returns approximate states consumed.</summary>
+    /// <summary>Execute one instruction (or take one pending interrupt). Returns the states consumed.</summary>
     public int Step()
     {
         long before = States;
@@ -178,6 +194,7 @@ public sealed class H8Cpu
         _noIrqNext = false;
 
         if (Halted) { States += 2; return 2; }
+        Bus.Tick();
 
         if (Interrupts != null && !skipIrq)
         {
@@ -204,9 +221,12 @@ public sealed class H8Cpu
         uint next = (pc + i.Len) & 0xffffff;
         PC = next;
         Instructions++;
-        _ex = 0;
+        States += i.Len - 2;                // words after the first were fetched before the operation executes
+        if (i.Len > 2) Bus.Tick();
+        _psEarly = false;
         int extra = Execute(in i, pc, next);
-        States += i.Len + extra + _ex;
+        Bus.Tick();
+        States += (_psEarly ? 0 : 2) + extra; // prefetch of the next instruction's first word (unless the op already paid it) + internal cycles
         return (int)(States - before);
     }
 
@@ -220,8 +240,8 @@ public sealed class H8Cpu
         switch (o.Mode)
         {
             case H8Mode.Ind: return ER[o.Reg] & 0xffffff;
-            case H8Mode.PostInc: post = true; _ex += 2; return ER[o.Reg] & 0xffffff;
-            case H8Mode.PreDec: _ex += 2; ER[o.Reg] -= (uint)size; return ER[o.Reg] & 0xffffff;
+            case H8Mode.PostInc: post = true; States += 2; return ER[o.Reg] & 0xffffff;
+            case H8Mode.PreDec: States += 2; ER[o.Reg] -= (uint)size; return ER[o.Reg] & 0xffffff;
             case H8Mode.Disp: return (ER[o.Reg] + (uint)o.Val) & 0xffffff;
             case H8Mode.Abs: return (uint)o.Val & 0xffffff;
             default: throw new InvalidOperationException("bad EA mode " + o.Mode);
@@ -405,6 +425,7 @@ public sealed class H8Cpu
 
             case H8Op.Mov:
             {
+                if (IsMem(in i.Src) || IsMem(in i.Dst)) { Bus.Tick(); States += 2; _psEarly = true; } // MAME: prefetch_start, then the data access(es)
                 uint v = ReadOp(in i.Src, sz);
                 SetNzv(v, sz);
                 WriteOp(in i.Dst, sz, v);
@@ -493,12 +514,14 @@ public sealed class H8Cpu
             case H8Op.Orc: CCR |= (byte)i.Src.Val; _noIrqNext = true; break;
             case H8Op.Xorc: CCR ^= (byte)i.Src.Val; _noIrqNext = true; break;
             case H8Op.Ldc:
+                if (IsMem(in i.Src)) { Bus.Tick(); States += 2; _psEarly = true; }
                 if (i.Src.Mode == H8Mode.Imm) CCR = (byte)i.Src.Val;
                 else if (i.Src.Mode == H8Mode.Reg) CCR = (byte)GetReg(1, i.Src.Reg);
                 else CCR = (byte)(ReadOp(in i.Src, 2) >> 8);
                 _noIrqNext = true;
                 break;
             case H8Op.Stc:
+                if (IsMem(in i.Dst)) { Bus.Tick(); States += 2; _psEarly = true; }
                 if (i.Dst.Mode == H8Mode.Reg) SetReg(1, i.Dst.Reg, CCR);
                 else WriteOp(in i.Dst, 2, (uint)((CCR << 8) | CCR));
                 break;
@@ -515,7 +538,7 @@ public sealed class H8Cpu
                 int bit = (int)(i.Src.Mode == H8Mode.Imm ? (uint)i.Src.Val : GetReg(1, i.Src.Reg)) & 7;
                 byte v = (byte)ReadBitTarget(in i.Dst, out uint ea);
                 ApplyBit(i.Op, ref v, bit);
-                WriteBitTarget(in i.Dst, ea, v);
+                WriteBitTarget(in i.Dst, ea, v);  // MAME order: read, prefetch_start, write
                 break;
             }
             case H8Op.Btst:
@@ -532,7 +555,7 @@ public sealed class H8Cpu
                 bool c = (CCR & FlagC) != 0;
                 if (i.Op == H8Op.Bist) c = !c;
                 if (c) v |= (byte)(1 << bit); else v &= (byte)~(1 << bit);
-                WriteBitTarget(in i.Dst, ea, v);
+                WriteBitTarget(in i.Dst, ea, v);  // read, prefetch_start, write
                 break;
             }
             case H8Op.Bld: case H8Op.Bild: case H8Op.Band: case H8Op.Biand: case H8Op.Bor: case H8Op.Bior: case H8Op.Bxor: case H8Op.Bixor:
@@ -635,11 +658,12 @@ public sealed class H8Cpu
             case H8Op.Rte:
             {
                 uint sp = ER[7];
+                States += 4;
                 uint w = Bus.Read16(sp & 0xffffff);
                 CCR = (byte)(w >> 8);
                 PC = (((w & 0xff) << 16) | Bus.Read16((sp + 2) & 0xffffff)) & 0xffffff;
                 ER[7] = sp + 4;
-                extra += 8;
+                extra += 4;
                 break;
             }
             case H8Op.Trapa:
@@ -654,20 +678,20 @@ public sealed class H8Cpu
                 {
                     while ((ER[4] & 0xff) != 0)
                     {
+                        States += 4;
                         Bus.Write8(ER[6] & 0xffffff, Bus.Read8(ER[5] & 0xffffff));
                         ER[5]++; ER[6]++;
                         ER[4] = (ER[4] & 0xffffff00) | ((ER[4] - 1) & 0xff);
-                        extra += 4;
                     }
                 }
                 else
                 {
                     while ((ER[4] & 0xffff) != 0)
                     {
+                        States += 4;
                         Bus.Write8(ER[6] & 0xffffff, Bus.Read8(ER[5] & 0xffffff));
                         ER[5]++; ER[6]++;
                         ER[4] = (ER[4] & 0xffff0000) | ((ER[4] - 1) & 0xffff);
-                        extra += 4;
                     }
                 }
                 break;
@@ -678,17 +702,20 @@ public sealed class H8Cpu
         return extra;
     }
 
+    private static bool IsMem(in H8Operand o) => o.Mode != H8Mode.Reg && o.Mode != H8Mode.Imm && o.Mode != H8Mode.Const && o.Mode != H8Mode.None && o.Mode != H8Mode.Ccr;
+
     private uint ReadBitTarget(in H8Operand o, out uint ea)
     {
         if (o.Mode == H8Mode.Reg) { ea = 0; return GetReg(1, o.Reg); }
         ea = o.Mode == H8Mode.Ind ? ER[o.Reg] & 0xffffff : (uint)o.Val & 0xffffff;
-        _ex += 2;
+        Bus.Tick();
+        States += 2;
         return Bus.Read8(ea);
     }
 
     private void WriteBitTarget(in H8Operand o, uint ea, byte v)
     {
-        if (o.Mode == H8Mode.Reg) SetReg(1, o.Reg, v); else { _ex += 2; Bus.Write8(ea, v); }
+        if (o.Mode == H8Mode.Reg) SetReg(1, o.Reg, v); else { Bus.Tick(); States += 2; _psEarly = true; Bus.Tick(); States += 2; Bus.Write8(ea, v); } // prefetch_start, then the write
     }
 
     private uint JumpTarget(in H8Operand o)

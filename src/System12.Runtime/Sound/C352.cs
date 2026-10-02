@@ -63,7 +63,7 @@ public sealed class C352
     public const int System12Divider = 288;
     public const int System12SampleRate = System12Clock / System12Divider; // 88200 Hz
 
-    private struct Voice
+    internal struct Voice
     {
         public uint Pos;
         public uint Counter;
@@ -355,4 +355,22 @@ public sealed class C352
     public bool IsBusy(int voice) => (_v[voice].Flags & FlgBusy) != 0;
     public ushort FlagsOf(int voice) => _v[voice].Flags;
     public uint PositionOf(int voice) => _v[voice].Pos;
+
+    /// <summary>Noise generator state (16-bit LFSR, seed 0x1234 after reset).</summary>
+    public ushort NoiseState => _random;
+
+    public readonly struct VoiceSnapshot
+    {
+        public readonly uint Pos, Counter;
+        public readonly short Sample, LastSample;
+        public readonly byte Vol0, Vol1, Vol2, Vol3;
+        public readonly ushort Flags;
+        internal VoiceSnapshot(in Voice v)
+        {
+            Pos = v.Pos; Counter = v.Counter; Sample = v.Sample; LastSample = v.LastSample;
+            Vol0 = v.Vol0; Vol1 = v.Vol1; Vol2 = v.Vol2; Vol3 = v.Vol3; Flags = v.Flags;
+        }
+    }
+
+    public VoiceSnapshot Snapshot(int voice) => new VoiceSnapshot(in _v[voice]);
 }

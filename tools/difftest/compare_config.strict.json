@@ -1,0 +1,1 @@
+{"profiles": {"frame": {"cpu": "exact", "ram": "exact", "events": "chain"}}, "ram": {"regions": {"stack": "exact"}}}

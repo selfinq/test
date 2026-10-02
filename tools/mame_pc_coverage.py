@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compare a set of MAME-executed PCs against a recompiler function map.
 
-usage: mame_pc_coverage.py PCSET FUNCS [--image-end 0x803a8350] [--json OUT] [--list-outside N] [--per-func OUT.tsv]
+usage: mame_pc_coverage.py PCSET FUNCS [--image generated/ttt_image.bin] [--image-end 0x803a8350] [--json OUT]
+                           [--list-outside N] [--per-func OUT.tsv]
 
 PCSET  text file, one hex PC per line (virtual or physical; only the low 29 bits are compared,
        so kseg0/kseg1/kuseg aliases of the same RAM word are the same PC). '#' comments allowed.
@@ -10,6 +11,9 @@ FUNCS  either a text file with function start addresses (hex, one per line, opti
 Functions occupy [start, next_start); the last one ends at --image-end (default: end of the
 0x80010000 + 0x398350 game image). A PC is "outside" if it is below the first function start,
 at/above image end, or in a different segment than every function (boot ROM, low RAM, etc.).
+With --image (the raw game image loaded at 0x80010000, little-endian MIPS) it also decodes every
+executed `jal` and reports call targets that are not function starts in FUNCS (a direct check of
+the function detector against what the real game calls).
 Extents are only as good as the start list: the recompiler output carries no instruction
 addresses, so [start,next_start) over-approximates a function (it may include trailing data).
 """
@@ -59,7 +63,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('pcset'); ap.add_argument('funcs')
     ap.add_argument('--image-end', type=lambda x: int(x, 0), default=IMG_BASE + IMG_SIZE)
-    ap.add_argument('--json'); ap.add_argument('--per-func')
+    ap.add_argument('--json'); ap.add_argument('--per-func'); ap.add_argument('--image')
     ap.add_argument('--list-outside', type=int, default=40, help='print up to N outside PCs (as ranges)')
     a = ap.parse_args()
 
@@ -100,6 +104,41 @@ def main():
         print(f'\n{name}: {len(lst)} PCs in {len(r)} contiguous ranges (physical addrs, first {a.list_outside}):')
         for lo, hi in r[:a.list_outside]:
             print(f'  {lo:08x}-{hi:08x} ({(hi-lo)//4+1} words)')
+    if a.image:
+        img = open(a.image, 'rb').read()
+        sset = set(s_m)
+        jal_sites = jal_ok = 0
+        bad = collections.Counter(); notexec = 0
+        pcset = set(pcs)
+        for p in pcs:
+            off = p - (IMG_BASE & MASK)
+            if 0 <= off < len(img) - 3:
+                w = int.from_bytes(img[off:off+4], 'little')
+                if w >> 26 == 3:      # jal
+                    jal_sites += 1
+                    t = (((p | 0x80000000) & 0xf0000000) | ((w & 0x3ffffff) << 2)) & MASK
+                    if t in sset: jal_ok += 1
+                    else: bad[t] += 1
+                    if t not in pcset: notexec += 1
+        # executed-run starts that look like function prologues (addiu sp,sp,-N = 0x27bdXXXX, N>0) but are
+        # not in the function list: candidate entries reached by jr/jalr (function pointers, jump tables)
+        mid_entries = []
+        for p in pcs:
+            off = p - (IMG_BASE & MASK)
+            if (p - 4) in pcset or not (0 <= off < len(img) - 3): continue
+            w = int.from_bytes(img[off:off+4], 'little')
+            if (w >> 16) == 0x27bd and (w & 0x8000) and p not in sset:
+                mid_entries.append(p)
+        res['executed_prologue_run_starts_not_function_starts'] = len(mid_entries)
+        res['prologue_not_func_start_examples'] = [f'{x|0x80000000:08x}' for x in mid_entries[:20]]
+        res['executed_jal_sites'] = jal_sites
+        res['jal_targets_that_are_function_starts'] = jal_ok
+        res['distinct_jal_targets_not_function_starts'] = len(bad)
+        res['jal_sites_whose_target_not_executed'] = notexec
+        print(json.dumps({k: res[k] for k in res if 'jal' in k or 'prologue' in k}, indent=1))
+        if bad:
+            print('jal targets not in function list (physical, first %d):' % a.list_outside,
+                  ' '.join(f'{t|0x80000000:08x}' for t in sorted(bad)[:a.list_outside]))
     if a.json:
         res['outside_pcs'] = [f'{p:08x}' for p in outside]
         with open(a.json, 'w') as f: json.dump(res, f)

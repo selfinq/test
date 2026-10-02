@@ -65,18 +65,17 @@ end
 ----------------------------------------------------------------------------------------------
 -- DMA command list hashing (ch2 linked lists = GPU command lists)
 ----------------------------------------------------------------------------------------------
+-- BEGIN dma_hash (extracted verbatim by dma_hash_selftest.lua: needs only `mem`)
 local FNV_OFFSET = 0xcbf29ce484222325
 local FNV_PRIME  = 0x100000001b3
 local RAM_PHYS_MASK = 0x3ffffc
 
+-- Returns nwords, fnv1a64 over the 32-bit words (LSB first) of the RAM range covered by the transfer, read AFTER the
+-- transfer (the debugger stops after the CHCR store, MAME's DMA already ran): the source list/data of a transfer from RAM,
+-- the delivered data of a transfer into RAM. chcr bit 1 = step -4 (ordering table clear, ch6).
 local function dma_hash(chcr, madr, bcr)
-  -- returns nwords, fnv1a64 over the 32-bit words (LSB first) read from RAM; 0 hash for transfers into RAM
   local sync = (chcr >> 9) & 3
-  if (chcr & 1) == 0 then
-    local n = bcr & 0xffff; if n == 0 then n = 0x10000 end
-    if sync == 1 then n = (bcr & 0xffff) * (bcr >> 16) end
-    return n, 0
-  end
+  local step = ((chcr & 2) ~= 0) and -4 or 4
   local h, n = FNV_OFFSET, 0
   local function feed(w)
     for sh = 0, 24, 8 do h = (h ~ ((w >> sh) & 0xff)) * FNV_PRIME end
@@ -98,10 +97,11 @@ local function dma_hash(chcr, madr, bcr)
     local cnt
     if sync == 1 then cnt = (bcr & 0xffff) * (bcr >> 16) else cnt = bcr & 0xffff; if cnt == 0 then cnt = 0x10000 end end
     if cnt > 0x100000 then cnt = 0x100000 end
-    for i = 0, cnt - 1 do feed(mem:read_u32((a + 4 * i) & RAM_PHYS_MASK)) end
+    for i = 0, cnt - 1 do feed(mem:read_u32((a + step * i) & RAM_PHYS_MASK)) end
   end
   return n, h
 end
+-- END dma_hash
 
 ----------------------------------------------------------------------------------------------
 -- watchpoints
@@ -144,6 +144,9 @@ end
 ----------------------------------------------------------------------------------------------
 -- checkpoint
 ----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------
+-- register tables and input pinning
+----------------------------------------------------------------------------------------------
 local GPR = { "zero","at","v0","v1","a0","a1","a2","a3","t0","t1","t2","t3","t4","t5","t6","t7",
               "s0","s1","s2","s3","s4","s5","s6","s7","t8","t9","k0","k1","gp","sp","fp","ra" }
 local COP2_D = { "vxy0","vz0","vxy1","vz1","vxy2","vz2","rgb","otz","ir0","ir1","ir2","ir3",
@@ -153,6 +156,28 @@ local COP2_C = { "r11r12","r13r21","r22r23","r31r32","r33","trx","try","trz",
                  "l11l12","l13l21","l22l23","l31l32","l33","rbk","gbk","bbk",
                  "lr1lr2","lr31g1","lg2lg3","lb1lb2","lb3","rfc","gfc","bfc",
                  "ofx","ofy","h","dqa","dqb","zsf3","zsf4","flag" }
+
+
+-- DETERMINISM FIX. MAME 0.264 never resets the GTE (COP2) register file: it lives in uninitialised heap memory of the
+-- psxcpu device. Depending on heap history (even on the length of command line arguments) up to six GTE registers
+-- (data 0,1,24,25, control 8,9) hold leftovers of freed heap chunks, e.g. a host pointer 0x0000559e6ecceff0 split over
+-- two registers, which changes with ASLR on every run (observed: two identical runs, different snapshot hashes, only
+-- these registers differing). The reference therefore pins the state before the first instruction executes: every GTE
+-- register, hi, lo, EPC and BadA are set to 0. The pre-pin non-zero values are recorded in manifest.json.
+local PINNED = {}
+if os.getenv("DT_TEST_DIRTY") == "1" then   -- test hook: simulate the uninitialised-memory garbage
+  st["vxy0"].value = 0xdeadbeef; st["mac0"].value = 0x1234; st["l11l12"].value = 0x55; st["lo"].value = 7
+end
+local NO_PIN = os.getenv("DT_NO_PIN") == "1"     -- demonstration hook: reproduces the MAME non-determinism
+local function pin(name)
+  local e = st[name]
+  local v = e.value
+  if v ~= 0 then PINNED[#PINNED + 1] = string.format("%s=0x%x", name, v) end
+  if not NO_PIN then e.value = 0 end
+end
+for _, n in ipairs(COP2_D) do pin(n) end
+for _, n in ipairs(COP2_C) do pin(n) end
+for _, n in ipairs({ "hi", "lo", "EPC", "BadA" }) do pin(n) end
 
 local seq = 0
 local MAX_CHECKPOINTS = 2000      -- hard guard against runaway loops
@@ -200,16 +225,35 @@ if debug_ok and PCS ~= "" then
 end
 if debug_ok and EVENTS then install_watchpoints() end
 
+-- The debugger stops AFTER the instruction (and thus the DMA, which MAME runs inside the CHCR write handler) completed,
+-- so MADR/BCR read from the registers are already post-transfer (e.g. MADR = 0x00ffffff after a linked list). The guest
+-- visible inputs are therefore recovered from the most recent "W <addr> <value>" lines of the debug console that the
+-- watchpoint actions printed (shadow registers).
+local shadow = {}
+local function shadow_reg(cl, n, addr)
+  local key = string.format("W %08x ", addr)
+  for i = n, math.max(1, n - 3000), -1 do
+    local line = tostring(cl[i])
+    if line:sub(1, 11) == key then
+      local v = tonumber(line:sub(12, 19), 16)
+      shadow[addr] = v
+      return v
+    end
+  end
+  return shadow[addr]          -- not in the window: last value seen at an earlier stop (nil -> caller falls back)
+end
+
 local function handle_stop_inner()
   local cl = dbg.consolelog
   local n = #cl
   -- DMA start watchpoint?
   for i = n, math.max(1, n - 3), -1 do
-    local val, addr = tostring(cl[i]):match("Stopped at watchpoint %d+ writing (%x+) to (%x+)")
+    local val, addr = tostring(cl[i]):match("Stopped at watchpoint %x+ writing (%x+) to (%x+)")
     if val then
       local chcr, a = tonumber(val, 16), tonumber(addr, 16)
       local ch = (a - DMA_CHCR0) // 16
-      local madr, bcr = mem:read_u32(a - 8), mem:read_u32(a - 4)
+      local madr = shadow_reg(cl, n, a - 8) or mem:read_u32(a - 8)
+      local bcr = shadow_reg(cl, n, a - 4) or mem:read_u32(a - 4)
       local words, h = dma_hash(chcr, madr, bcr)
       console("D %d %08x %08x %08x %d %016x", ch, chcr, madr, bcr, words, h)
       dma_events = dma_events + 1
@@ -240,20 +284,23 @@ if debug_ok then emu.register_periodic(handle_stop) end
 -- frame checkpoints
 ----------------------------------------------------------------------------------------------
 local first_ram_done = false
+local finished = false
 local function finish()
+  finished = true
   cpf:close()
   local mf = io.open(OUT .. "/manifest.json", "w")
   mf:write(string.format(
     '{"mame_version":"%s","debugger":%s,"pcs_requested":"%s","frames":%d,"events_enabled":%s,' ..
-    '"ram_base":"%s","ram_size":%d,"every":%d,"dma_events":%d,"pc_checkpoints":%d}\n',
+    '"ram_base":"%s","ram_size":%d,"every":%d,"dma_events":%d,"pc_checkpoints":%d,"pinned_nonzero_before_pin":"%s"}\n',
     emu.app_version(), tostring(debug_ok), PCS, frame, tostring(debug_ok and EVENTS),
-    hex32(RAM_BASE), RAM_SIZE, EVERY, dma_events, bp_checkpoints))
+    hex32(RAM_BASE), RAM_SIZE, EVERY, dma_events, bp_checkpoints, table.concat(PINNED, " ")))
   mf:close()
   local df = io.open(OUT .. "/done.txt", "w"); df:write("ok\n"); df:close()
   m:exit()
 end
 
 emu.register_frame_done(function() guarded("frame_done", function()
+  if finished then return end        -- m:exit() takes effect a little later: more frame callbacks may arrive
   frame = frame + 1
   if not first_ram_done and (pc_now() >> 28) == 8 then
     first_ram_done = true

@@ -157,6 +157,20 @@ class Ram(unittest.TestCase):
         fd = rep["first_divergence"]
         self.assertEqual((fd["checkpoint"], fd["item"]["path"], fd["item"]["first_addr"]), ("frame_0001", "ram.code", "0x80000000"))
 
+    def test_settle_point_limits_static_page_comparison(self):
+        a = S.build()
+        conf = cfg(ram={"settle_id": "pc_80001000_1"})
+        # before the settle point (checkpoint 0) the RAM of a frame checkpoint is not judged at all
+        rep = C.compare(a, S.build(ram_pokes={0: [0x80000010]}), conf, S.DEFAULT_EVENTS, S.DEFAULT_EVENTS)
+        self.assertEqual(rep["verdict"], "MATCH")
+        self.assertIn("before the settle point", items(rep, "frame_0001")["ram"]["note"])
+        # from the settle point on, a page that is constant in checkpoints 1..2 is compared ...
+        rep = C.compare(a, S.build(ram_pokes={2: [0x80008010]}), conf, S.DEFAULT_EVENTS, S.DEFAULT_EVENTS)
+        self.assertEqual(rep["first_divergence"]["item"]["first_addr"], "0x80008000")
+        # ... but without a settle point that page counts as volatile (it changes between checkpoint 0 and 1)
+        rep = C.compare(a, S.build(ram_pokes={2: [0x80008010]}), cfg(), S.DEFAULT_EVENTS, S.DEFAULT_EVENTS)
+        self.assertEqual(rep["verdict"], "MATCH")
+
     def test_candidate_without_pages_is_unverified_for_static_pages(self):
         a, b = S.build(), S.build()
         for cp in b["checkpoints"]:
@@ -240,6 +254,17 @@ class Events(unittest.TestCase):
         rep = C.compare(a, S.build(events=short, splits=(1, 2, 3)), cfg(events={"length": "strict"}), S.DEFAULT_EVENTS, short)
         self.assertEqual(rep["events"]["status"], "diverge")
         self.assertEqual(rep["events"]["reason"], "length")
+
+
+class Notes(unittest.TestCase):
+    def test_debugger_mode_mismatch_is_flagged(self):
+        a, b = S.build(), S.build()
+        a["producer"] = {"name": "mame", "debugger": True}
+        b["producer"] = {"name": "mame", "debugger": False}
+        rep = C.compare(a, b, cfg(), S.DEFAULT_EVENTS, S.DEFAULT_EVENTS)
+        self.assertTrue(any("debugger" in n for n in rep["notes"]))
+        b["producer"]["debugger"] = True
+        self.assertEqual(C.compare(a, b, cfg(), S.DEFAULT_EVENTS, S.DEFAULT_EVENTS)["notes"], [])
 
 
 class Checkpoints(unittest.TestCase):

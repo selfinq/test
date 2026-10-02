@@ -27,3 +27,12 @@ reports/a01_run_nonstrict.log
 **/at28c16
 **/nvram_seed/
 reports/trace_a*/**/*.gz
+
+# derived from running the user ROMs: regenerate locally
+reports/trace_a09/golden/
+reports/trace_a09/outputs/
+reports/trace_a09/work/
+reports/trace_a02/out/
+reports/trace_a02/**/*.pcs
+reports/trace_a02/**/*.samples
+**/*.pcs

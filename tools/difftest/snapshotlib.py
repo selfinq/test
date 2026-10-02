@@ -149,6 +149,54 @@ class EventChains:
         return {"w_count": self.wn, "w_chain": self.w, "r_count": self.rn, "r_chain": self.r}
 
 
+# ------------------------------------------------------------------ DMA summary (mirror of mame_capture.lua dma_hash)
+
+FNV_OFFSET = 0xcbf29ce484222325
+FNV_PRIME = 0x100000001b3
+RAM_PHYS_MASK = 0x3ffffc
+
+
+def fnv1a64_words(words):
+    """FNV-1a 64 over 32-bit words, each word fed least significant byte first."""
+    h = FNV_OFFSET
+    for w in words:
+        for sh in (0, 8, 16, 24):
+            h = ((h ^ ((w >> sh) & 0xff)) * FNV_PRIME) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def dma_summary(read_word, chcr, madr, bcr):
+    """Python definition of the 'D' event payload (n, h). read_word(phys_addr) returns the 32-bit RAM word as it is
+    AFTER the transfer. Same rules as mame_capture.lua / docs/difftest/CANDIDATE_SNAPSHOT.md section 4."""
+    sync = (chcr >> 9) & 3
+    step = -4 if (chcr & 2) else 4
+    words = []
+    a = madr & RAM_PHYS_MASK
+    if sync == 2:
+        nodes = 0
+        while nodes < 0x40000:
+            hdr = read_word(a)
+            words.append(hdr)
+            for i in range(1, (hdr >> 24) + 1):
+                words.append(read_word((a + 4 * i) & RAM_PHYS_MASK))
+            nodes += 1
+            nxt = hdr & 0xffffff
+            if nxt & 0x800000:
+                break
+            a = nxt & RAM_PHYS_MASK
+    else:
+        if sync == 1:
+            cnt = (bcr & 0xffff) * (bcr >> 16)
+        else:
+            cnt = bcr & 0xffff
+            if cnt == 0:
+                cnt = 0x10000
+        cnt = min(cnt, 0x100000)
+        for i in range(cnt):
+            words.append(read_word((a + step * i) & RAM_PHYS_MASK))
+    return len(words), fnv1a64_words(words)
+
+
 # ------------------------------------------------------------------ validation
 
 CP_REQUIRED = ("id", "sync")

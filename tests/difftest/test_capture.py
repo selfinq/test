@@ -206,6 +206,74 @@ class Finalize(unittest.TestCase):
                 CM.finalize(d, os.path.join(d, "s.json"), S.REGIONS_CFG, {})
 
 
+class Vectors(unittest.TestCase):
+    """Cross-implementation vectors (tests/difftest/vectors.json) for the C# side, plus independent sanity checks."""
+
+    def load(self):
+        with open(os.path.join(HERE, "vectors.json")) as f:
+            return json.load(f)
+
+    @staticmethod
+    def fnv_bytes(b):       # textbook FNV-1a 64, independent of snapshotlib
+        h = 0xcbf29ce484222325
+        for x in b:
+            h = ((h ^ x) * 0x100000001b3) % (1 << 64)
+        return h
+
+    def test_fnv_constants_against_published_test_vectors(self):
+        self.assertEqual(self.fnv_bytes(b""), 0xcbf29ce484222325)
+        self.assertEqual(self.fnv_bytes(b"a"), 0xaf63dc4c8601ec8c)
+        self.assertEqual(self.fnv_bytes(b"foobar"), 0x85944171f73967e8)
+        words = [0x12345678, 0xdeadbeef]
+        self.assertEqual(sl.fnv1a64_words(words), self.fnv_bytes(b"".join(w.to_bytes(4, "little") for w in words)))
+
+    def test_vectors_file_is_current(self):
+        out = subprocess.run([sys.executable, os.path.join(TOOLS, "make_vectors.py")], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(out), self.load())
+
+    def test_vectors_reproduce(self):
+        v = self.load()
+        ch = sl.EventChains()
+        for e, want, text in zip(v["events"]["events"], v["events"]["state_after_each_event"], v["events"]["canonical_text"]):
+            ch.add(e)
+            self.assertEqual(sl.event_compared_text(e), text)
+            self.assertEqual(ch.state(), want)
+        ram = {int(k, 16): int(w, 16) for k, w in v["dma"]["ram_words"].items()}
+        for c in v["dma"]["cases"]:
+            n, h = sl.dma_summary(lambda a: ram.get(a & 0x3ffffc, 0), int(c["chcr"], 16), int(c["madr"], 16), int(c["bcr"], 16))
+            self.assertEqual((n, "0x%016x" % h), (c["n"], c["h"]), c["name"])
+        r = v["ram"]
+        self.assertEqual(sl.hash_ram(bytes.fromhex(r["ram_hex"]), r["config"], int(r["sp"], 16)), r["expected"])
+        self.assertEqual(sl.snapshot_hash(v["snapshot_hash"]["snapshot"]), v["snapshot_hash"]["sha256"])
+        self.assertEqual(sl.sha256_hex(v["snapshot_hash"]["canonical_json"].encode()), v["snapshot_hash"]["sha256"])
+
+    def test_linked_list_walk_stops_on_terminator_and_loop_guard(self):
+        ram = {0x100: (0 << 24) | 0x100}            # node pointing to itself, never terminates
+        n, h = sl.dma_summary(lambda a: ram.get(a, 0), 0x01000401, 0x100, 0)
+        self.assertEqual(n, 0x40000)                 # guard: 0x40000 nodes of 1 word
+        ram = {0x100: (2 << 24) | 0x800000, 0x104: 1, 0x108: 2}
+        self.assertEqual(sl.dma_summary(lambda a: ram.get(a, 0), 0x01000401, 0x100, 0)[0], 3)
+
+
+class FixedTimeShim(unittest.TestCase):
+    def test_shim_freezes_time_call(self):
+        import shutil
+        if not shutil.which("gcc"):
+            self.skipTest("gcc not available")
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["gcc", "-shared", "-fPIC", "-O2", "-o", os.path.join(d, "ft.so"), os.path.join(TOOLS, "fixedtime.c")], check=True)
+            wb(os.path.join(d, "t.c"), "#include <stdio.h>\n#include <time.h>\nint main(void){time_t a=time(NULL),b;time(&b);printf(\"%ld %ld\\n\",(long)a,(long)b);return 0;}\n", "w")
+            subprocess.run(["gcc", "-o", os.path.join(d, "t"), os.path.join(d, "t.c")], check=True)
+            plain = subprocess.run([os.path.join(d, "t")], capture_output=True, text=True).stdout.split()
+            self.assertGreater(int(plain[0]), 1700000000)
+            env = dict(os.environ, LD_PRELOAD=os.path.join(d, "ft.so"), DT_FIXED_TIME="123456789")
+            out = subprocess.run([os.path.join(d, "t")], capture_output=True, text=True, env=env).stdout.split()
+            self.assertEqual(out, ["123456789", "123456789"])
+            env.pop("DT_FIXED_TIME")
+            out = subprocess.run([os.path.join(d, "t")], capture_output=True, text=True, env=env).stdout.split()
+            self.assertEqual(out, ["1767225600", "1767225600"])
+
+
 class RestoreNvram(unittest.TestCase):
     def mkseed(self, d, content=b"seed-bytes"):
         os.makedirs(os.path.join(d, "seed", "tektagt"))

@@ -31,6 +31,8 @@ def sha_file(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--outdir", required=True)
+    ap.add_argument("--existing", nargs="+", metavar="SNAPSHOT",
+                    help="do not run MAME: analyse these already captured snapshots (>= 2) for identity")
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--frames", type=int, default=1500)
     ap.add_argument("--parallel", action="store_true", help="run the captures concurrently (also stresses host timing)")
@@ -38,6 +40,11 @@ def main(argv=None):
     os.makedirs(a.outdir, exist_ok=True)
     procs = []
     outs = []
+    if a.existing:
+        if len(a.existing) < 2:
+            sys.exit("--existing needs at least two snapshots")
+        outs = [os.path.abspath(p) for p in a.existing]
+        a.runs = 0
     for i in range(a.runs):
         out = os.path.join(a.outdir, "run%d.json" % (i + 1))
         outs.append(out)

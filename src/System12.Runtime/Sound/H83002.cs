@@ -8,13 +8,17 @@
 // What is and is not modelled is listed in the class comments and in docs/system12/SOUND.md.
 //
 // General honesty notes:
-//  * Timing is expressed in CPU states (phi = 16.9344 MHz on System 12). The CPU core's state counts are an
-//    approximation (see H8Cpu), so interrupt/timer phase relative to instruction streams differs from real
-//    hardware and from MAME at the instruction level; frequency-domain behaviour (timer periods) is exact.
-//  * SCI is modelled at BYTE level (transfer start -> completion after the exact bit-clock duration);
-//    individual bit edges are not simulated; attached peripherals see whole bytes.
-//  * DMAC, serial 'smart card' modes, input capture/PWM/phase counting of the ITUs, software standby and
-//    the refresh controller are register-store only.
+//  * Timing is expressed in CPU states (phi = 16.9344 MHz on System 12) and follows MAME's cycle accounting (see H8Cpu);
+//    timer/SCI/vblank event times were verified cycle-exactly against MAME 0.264 traces for the boot sequence (first
+//    225,348 instructions identical in PC and cycle count) and for the C352 write timeline (0-state offset for 1,201 writes).
+//  * SCI is modelled at BYTE level (transfer start -> completion after the exact bit-clock duration, using MAME 0.264's
+//    tick-grid rules); individual bit edges are not simulated; attached peripherals see whole bytes. The SCI/INTC rules
+//    follow the 0.264 binary used as reference (its h8_sci.cpp differs from current master).
+//  * DMAC, smart-card modes, ITU input capture/PWM/phase counting/external clocks, software standby and the refresh
+//    controller are register-store only. The A/D converter implements software and external (ADTRG = vblank) start,
+//    single and scan conversion with MAME's conversion times; analog inputs come from IH83002Board.ReadAdc.
+//  * Interrupt priorities (ICRA/ICRB) use MAME's vector-to-bit mapping; H8Intc.MameIcrQuirk reproduces MAME's
+//    icr_w byte-handling bug for bit-exact differential testing (default off = datasheet behaviour).
 
 using System;
 
@@ -47,7 +51,23 @@ public sealed class H8Intc : IH8InterruptSource
 
     private readonly bool[] _pending = new bool[64];
     public byte Ier, Isr, Iscr;
-    public byte IcrA, IcrB;
+    private int _icr;                       // ICRA (bits 0..7) | ICRB (bits 8..15)
+    public byte IcrA => (byte)_icr;
+    public byte IcrB => (byte)(_icr >> 8);
+
+    /// <summary>
+    /// Reproduce MAME 0.264/master's h8h_intc_device::icr_w, which does `m_icr = (m_icr &amp; (0xff &lt;&lt; (8*offset))) | (data &lt;&lt; (8*offset))`:
+    /// writing one ICR byte discards the OTHER byte (and ORs into its own old value). This is almost certainly a MAME bug; with the
+    /// real register semantics (default, false) priorities written to ICRA survive a later write of ICRB. The quirk only matters
+    /// for sub-microsecond interrupt-nesting races and is provided to make differential tests against MAME bit-exact.
+    /// </summary>
+    public bool MameIcrQuirk;
+
+    public void WriteIcr(int offset, byte v)
+    {
+        if (MameIcrQuirk) _icr = (_icr & (0xff << (8 * offset))) | (v << (8 * offset));
+        else _icr = (_icr & ~(0xff << (8 * offset))) | (v << (8 * offset));
+    }
     public byte Syscr = 0x09;       // reset value (UE=1, NMIEG=0)
     private byte _irqInput;          // pin states (1 = asserted/active)
     private bool _nmiInput;
@@ -127,8 +147,7 @@ public sealed class H8Intc : IH8InterruptSource
         if (vec == VecNmi) return 2;
         int b = IcrBitFor(vec);
         if (b < 0) return 0;
-        int icr = IcrA | (IcrB << 8);
-        return (icr >> b) & 1;
+        return (_icr >> b) & 1;
     }
 
     public int PendingVector(byte ccr)
@@ -382,11 +401,11 @@ public sealed class H8Sci
 
     public void WriteSsr(byte v, long now)
     {
-        // clear flags by writing 0 after reading 1 (flags other than TDRE/TEND/MPB follow read-then-write-0)
-        if ((Scr & ScrTe) != 0 && (Ssr & _ssrRead & SsrTdre) != 0 && (v & SsrTdre) == 0)
-            Ssr &= unchecked((byte)~(SsrTdre | SsrTend));
-        Ssr = (byte)(((Ssr & (~_ssrRead | v | SsrTdre | SsrTend | SsrMpb)) & ~SsrMpbt) | (v & SsrMpbt));
-        _ssrRead &= Ssr;
+        // MAME 0.264 h8_sci_device::ssr_w (the reference binary; the newer master version requires a prior read before a flag clears):
+        if ((Scr & ScrTe) == 0) { v |= SsrTdre; Ssr |= SsrTdre; }
+        if ((Ssr & SsrTdre) != 0 && (v & SsrTdre) == 0) Ssr &= unchecked((byte)~SsrTend);
+        Ssr = (byte)((((Ssr & ~SsrMpbt) | (v & SsrMpbt)) & (v | (SsrTend | SsrMpb | SsrMpbt))));
+
         TryStartTx(now);
         TryStartRx(now);
     }
@@ -416,35 +435,51 @@ public sealed class H8Sci
         StartTx(now);
     }
 
-    private void StartTx(long now)
+    private long Div() => (2L << (2 * (Smr & 3))) * (Brr + 1);
+
+    private void StartTx(long now, bool backToBack = false)
     {
         _tsr = Tdr;
         Ssr |= SsrTdre;
         if ((Scr & ScrTie) != 0) _soc.Intc.Internal(_vecTxi);
         _txBusy = true;
-        _txDone = now + ByteStates();
         if (Sync)
         {
-            // clocked transfer: peer sees the byte now (bit edges are not simulated individually); RX data returned at completion.
+            // MAME: the internal clock ticks on a grid of 'div' states; the first tick is the next grid point after now;
+            // the 8 data bits take 16 ticks, the transfer ends on the 17th (TEND/next byte), RX data completes on the 16th.
+            long div = Div();
+            long first = (now / div + 1) * div;
+            if (backToBack) first += div; // MAME re-arms the clock inside internal_update, which then adds one more step
+            _txDone = first + 16 * div;
+            // clocked transfer: peer sees the byte now (bit edges are not simulated individually)
             bool rx = (Scr & ScrRe) != 0;
             int r = _soc.Board.SciSyncTransfer(_id, _tsr, true, rx);
-            if (rx && r >= 0) { _pendingRx = (byte)r; _pendingRxValid = true; }
-            _rxBusy = false;
+            if (rx)
+            {
+                _rxBusy = true; _rxDone = first + 15 * div;
+                _pendingRxValid = r >= 0; if (r >= 0) _pendingRx = (byte)r;
+            }
         }
-        else _soc.Board.SciAsyncTx(_id, _tsr);
+        else
+        {
+            _txDone = now + ByteStates();
+            _soc.Board.SciAsyncTx(_id, _tsr);
+        }
         UpdateEvent();
     }
 
     private byte _pendingRx; private bool _pendingRxValid;
 
-    private void TryStartRx(long now)
+    private void TryStartRx(long now, bool continuing = false)
     {
         // Sync receive only (RE=1, TE=0): clocks are generated by the SCI.
         if (_rxBusy || _txBusy) return;
         if (!Sync || (Scr & ScrRe) == 0 || (Scr & ScrTe) != 0) return;
         if ((Ssr & (SsrOrer | SsrPer | SsrFer)) != 0) return;
         _rxBusy = true;
-        _rxDone = now + ByteStates();
+        long div = Div();
+        // MAME starts the RX clock from now_as_cycles(), which (from the traced data) behaves as 1 state earlier than the CPU's cycle count
+        _rxDone = continuing ? now + 16 * div : ((now - 1) / div + 1) * div + 15 * div; // continuing: the clock keeps running, next byte completes 16 ticks later
         int r = _soc.Board.SciSyncTransfer(_id, 0xff, false, true);
         if (r >= 0) { _pendingRx = (byte)r; _pendingRxValid = true; } else _pendingRxValid = false;
         UpdateEvent();
@@ -480,17 +515,16 @@ public sealed class H8Sci
         if (_txBusy && now >= _txDone)
         {
             _txBusy = false;
-            if (Sync && _pendingRxValid && (Scr & ScrRe) != 0) { RxDone(_pendingRx); _pendingRxValid = false; }
+            Ssr |= SsrTend; // MAME 0.264: TEND is set at the end of every byte, even if another one is queued
             if ((Scr & ScrTeie) != 0) _soc.Intc.Internal(_vecTei);
-            if ((Scr & ScrTe) != 0 && (Ssr & SsrTdre) == 0) StartTx(_txDone);
-            else Ssr |= SsrTend;
+            if ((Scr & ScrTe) != 0 && (Ssr & SsrTdre) == 0) StartTx(_txDone, true);
         }
         if (_rxBusy && now >= _rxDone)
         {
             _rxBusy = false;
             if (_pendingRxValid) RxDone(_pendingRx);
             _pendingRxValid = false;
-            TryStartRx(_rxDone);
+            TryStartRx(_rxDone, true);
         }
         UpdateEvent();
     }
@@ -689,6 +723,9 @@ public sealed class H83002 : IH8Bus
     }
 
     public long NextEvent => _nextEvent;
+
+    /// <summary>IH8Bus.Tick: process peripheral events that are due before the next bus micro-operation.</summary>
+    public void Tick() { if (Cpu.States >= _nextEvent) ServiceEvents(); }
 
     /// <summary>Service peripheral events due at the current CPU time.</summary>
     public void ServiceEvents()
@@ -936,8 +973,8 @@ public sealed class H83002 : IH8Bus
             case 0xfffff4: Intc.WriteIscr(v); return;
             case 0xfffff5: Intc.WriteIer(v); return;
             case 0xfffff6: Intc.WriteIsr(v); return;
-            case 0xfffff8: Intc.IcrA = v; return;
-            case 0xfffff9: Intc.IcrB = v; return;
+            case 0xfffff8: Intc.WriteIcr(0, v); return;
+            case 0xfffff9: Intc.WriteIcr(1, v); return;
         }
         if (a >= 0xffff64 && a <= 0xffff9f)
         {

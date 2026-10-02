@@ -43,6 +43,7 @@ end
 print(string.format("pc_capture: %d breakpoints set in %.1fs (mode=%s)", count, os.clock() - tstart, mode))
 
 local frame = 0
+local samples = {}   -- PCs seen at frame_done (read-only cross-check: must be a subset of the executed set)
 local function write_result(final)
   local live = {}   -- index -> true for still-armed breakpoints
   for i, bp in pairs(dbg:bplist()) do
@@ -57,6 +58,12 @@ local function write_result(final)
   for _, a in ipairs(hit) do f:write(string.format("%08x\n", a)) end
   f:close()
   os.rename(out_path .. ".tmp", out_path)
+  local sf = assert(io.open(out_path .. ".samples", "w"))
+  local sk = {}
+  for a in pairs(samples) do sk[#sk + 1] = a end
+  table.sort(sk)
+  for _, a in ipairs(sk) do sf:write(string.format("%08x\n", a)) end
+  sf:close()
   print(string.format("pc_capture: %s frame=%d cpu=%.1fs %d/%d candidate PCs executed -> %s", final and "FINAL" or "partial", frame, os.clock() - tstart, #hit, count, out_path))
 end
 
@@ -64,6 +71,7 @@ local input_fn
 if os.getenv("PCC_INPUT") then input_fn = dofile(os.getenv("PCC_INPUT")) end
 emu.register_frame_done(function()
   frame = frame + 1
+  samples[cpu.state["pc"].value] = true
   if input_fn then input_fn(frame) end
   if dump_every > 0 and frame % dump_every == 0 then write_result(false) end
   if stop_frame > 0 and frame >= stop_frame then

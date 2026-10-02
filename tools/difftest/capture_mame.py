@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import snapshotlib as sl  # noqa: E402
 
+DEFAULT_FIXED_TIME = "1767225600"
 DEFAULT_ROMPATH = os.path.abspath(os.path.join(HERE, "..", "..", "input", "roms"))
 
 
@@ -155,6 +156,10 @@ def main(argv=None):
     ap.add_argument("--rompath", default=DEFAULT_ROMPATH)
     ap.add_argument("--seed-dir", default=os.path.join(HERE, "nvram_seed"))
     ap.add_argument("--regions", default=os.path.join(HERE, "regions_tektagt.json"))
+    ap.add_argument("--fixed-time", default=DEFAULT_FIXED_TIME,
+                    help="epoch seconds returned by time(2) inside MAME via the LD_PRELOAD shim fixedtime.c (compiled with gcc "
+                         "into the work dir); default 1767225600 = 2026-01-01 00:00:00 UTC; 'none' = real wall clock (NOT reproducible)")
+    ap.add_argument("--ignore-lua-errors", action="store_true", help="do not fail when the Lua script logged errors")
     ap.add_argument("--timeout", type=int, default=900)
     a = ap.parse_args(argv)
 
@@ -169,10 +174,20 @@ def main(argv=None):
     raw = os.path.join(work, "raw")
     shutil.rmtree(raw, ignore_errors=True)
     os.makedirs(raw)
+    shim = None
+    if a.fixed_time != "none":
+        shim = os.path.join(work, "fixedtime.so")
+        r = subprocess.run(["gcc", "-shared", "-fPIC", "-O2", "-o", shim, os.path.join(HERE, "fixedtime.c")], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit("cannot build the fixed-time shim (gcc missing?): %s\nUse --fixed-time none to accept a non-reproducible RTC." % r.stderr)
     use_dbg = bool(a.pcs) or not a.no_events
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy", DT_OUT=raw, DT_EVERY=str(a.every),
                DT_MAX_FRAME=str(a.frames), DT_PCS=a.pcs, DT_EVENTS="0" if a.no_events else "1", DT_READS="1" if a.reads else "0",
                DT_RAM_BASE=regions_cfg["ram_base"], DT_RAM_SIZE=str(regions_cfg["ram_size"]))
+    if shim:
+        env["LD_PRELOAD"] = shim + ((":" + env["LD_PRELOAD"]) if env.get("LD_PRELOAD") else "")
+        env["DT_FIXED_TIME"] = a.fixed_time
+        env["TZ"] = "UTC"
     cmd = [a.mame, "tektagt", "-rompath", a.rompath, "-video", "none", "-sound", "none", "-nothrottle",
            "-seconds_to_run", str(a.frames // 30 + 60), "-autoboot_script", os.path.join(HERE, "mame_capture.lua"),
            "-nvram_directory", os.path.join(work, "nvram"), "-cfg_directory", os.path.join(work, "cfg"),
@@ -190,6 +205,10 @@ def main(argv=None):
         f.write(p.stdout)
     if not os.path.exists(os.path.join(raw, "done.txt")):
         sys.exit("MAME run did not complete (rc=%s); see %s/mame.stderr.txt" % (p.returncode, work))
+    with open(os.path.join(raw, "lua_errors.txt")) as f:
+        lua_errors = f.read()
+    if lua_errors.strip() and not a.ignore_lua_errors:
+        sys.exit("mame_capture.lua reported errors (%s/lua_errors.txt):\n%s" % (raw, lua_errors[:2000]))
     with open(os.path.join(raw, "manifest.json")) as f:
         manifest = json.load(f)
     if use_dbg and not manifest["debugger"]:
@@ -198,7 +217,8 @@ def main(argv=None):
     with open(os.path.join(a.seed_dir, "SEED.sha256")) as f:
         seed_sha = f.read().split()[0]
     capture_info = {"frames": a.frames, "every": a.every, "pcs": [s for s in a.pcs.split(",") if s],
-                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads), "empty_nvram": bool(a.empty_nvram)}
+                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads), "empty_nvram": bool(a.empty_nvram),
+                    "fixed_time": None if a.fixed_time == "none" else int(a.fixed_time)}
     meta = {"nvram_after_run_sha256": file_sha256(nv) if os.path.exists(nv) else None,
             "mame_binary": a.mame, "mame_binary_sha256": file_sha256(a.mame), "mame_rc": p.returncode}
     snap = finalize(raw, a.out, regions_cfg, capture_info, meta_extra=meta, keep_raw=a.keep_raw, event_max=a.event_max)

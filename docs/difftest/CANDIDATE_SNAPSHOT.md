@@ -47,7 +47,7 @@ ones as `unverified` (or as divergence if listed in `require_ids` of the compare
 | `sync` | id pattern | meaning | exactness |
 |---|---|---|---|
 | `{"type":"pc_hit","pc":"0x80010000","nth":1}` | `pc_80010000_1` | machine state immediately BEFORE the nth execution of the instruction at exactly this 32-bit virtual pc | instruction exact: registers and RAM are compared bit for bit |
-| `{"type":"frame","frame":N}` | `frame_00060`, `final`, `first_ram_frame` | state at the producer's N-th frame boundary | NOT reproducible by a candidate without cycle accurate timing; only RAM pages that never change in the reference run are compared (profile `frame`) |
+| `{"type":"frame","frame":N}` | `frame_00060`, `final`, `first_ram_frame` | state at the producer's N-th frame boundary | NOT reproducible by a candidate without cycle accurate timing; registers are not compared and only RAM pages that stay byte-identical in every reference checkpoint from `first_ram_frame` on are compared (profile `frame`, `static_pages`; earlier checkpoints: RAM not judged) |
 
 Reference ids: `first_ram_frame` (first frame boundary at which the CPU is executing from KSEG0 RAM),
 `pc_80010000_1` (the jump into the decompressed image), `frame_00060 ... frame_01440` every 60 frames, `final`.
@@ -114,7 +114,7 @@ starts `D`) and `r` (reads `R`, not produced by default).
 ```json
 {"k":"W","a":"0x1f801810","d":"0xe1001000"}                       // store
 {"k":"R","a":"0x1f801074","d":"0x00000009"}                       // load (only when reads are watched)
-{"k":"D","ch":2,"chcr":"0x01000401","madr":"0x80123456","bcr":"0x00000000","n":12,"h":"0x00000000deadbeef"}
+{"k":"D","ch":2,"chcr":"0x01000401","madr":"0x803a67d8","bcr":"0x00000000","n":13,"h":"0x095733d457e90c9f"}
 ```
 Optional extra fields (`pc`, `f`, `w` = access width in bytes) are allowed and ignored by the comparer.
 
@@ -133,18 +133,27 @@ Optional extra fields (`pc`, `f`, `w` = access width in bytes) are allowed and i
   reference additionally logs reads of the EEPROM, `0x1f700000`, `0x1fb00000`, `0x1fb80000` and I_MASK
   (`0x1f801074`). The effect of a wrong read value shows up as a register/RAM divergence at a later checkpoint.
 * **DMA start (`D`).** Emitted right after the `W` event of a store to a channel's CHCR (`0x1f801088 + 0x10*ch`,
-  ch 0..6) whose value has bit 24 set, at the moment of the store (before the transfer runs):
-  `ch`, `chcr` (value written), `madr`/`bcr` = the values currently in the channel's MADR (`CHCR-8`) / BCR (`CHCR-4`)
-  registers (raw 32 bit as the guest wrote them), and
-  * transfer **from RAM** (`chcr & 1`): `sync = (chcr>>9)&3`; words are read from physical RAM at `addr & 0x3ffffc`;
-    `sync==2` (linked list, the GPU command list): start at `madr`; for each node read header `hdr`, feed it, then feed
-    `hdr>>24` payload words (`addr+4*i`), stop after the node if `(hdr & 0x00800000) != 0`, else continue at `hdr & 0xffffff`
-    (max 0x40000 nodes); `sync==1`: count = `(bcr&0xffff)*(bcr>>16)`; `sync==0`: count = `bcr&0xffff` (0 means 0x10000);
-    counts are capped at 0x100000 words; `n` = number of words fed, `h` = FNV-1a 64 over the bytes of every fed
-    word, least significant byte first (offset basis `0xcbf29ce484222325`, prime `0x100000001b3`, `h = (h ^ byte) * prime mod 2^64`),
-  * transfer **into RAM** (`chcr&1 == 0`): `n` = the count by the same formulas (for `sync==2`/`0` the `bcr&0xffff` rule), `h = 0`.
-  *Verified on MAME:* ch2 linked-list starts occur from frame ~375 on (13 in the first 480 frames, e.g.
-  `D 2 01000401 ...`). The `h` and `n` values themselves have not been cross-checked against an independent implementation yet.
+  ch 0..6) whose value has bit 24 set. Fields:
+  * `ch`, `chcr` = the value written;
+  * `madr`, `bcr` = the LAST VALUES THE GUEST WROTE to the channel's MADR (`CHCR-8`) / BCR (`CHCR-4`) before this store
+    (shadow registers, raw 32 bit). Do NOT read the live registers: MAME's DMA runs inside the CHCR write, so the live
+    MADR is already `0x00ffffff` after a linked list (*verified*, that is why the reference uses shadows);
+  * `n`, `h`: the RAM range of the transfer and its hash, computed right AFTER the transfer finished (for a transfer from
+    RAM that is the source data, for a transfer into RAM the data that was delivered - e.g. the banked-ROM loads below).
+    Words are read from physical RAM at `addr & 0x3ffffc`. `sync = (chcr>>9)&3`:
+    `sync==2` (linked list = GPU command list): start at `madr`; per node read the header `hdr`, feed it, then feed
+    `hdr>>24` payload words (`addr+4*i`); stop after the node if `(hdr & 0x00800000) != 0`, else continue at `hdr & 0xffffff`
+    (max 0x40000 nodes). `sync==1`: count = `(bcr&0xffff)*(bcr>>16)`; `sync==0`: count = `bcr&0xffff` (0 means 0x10000);
+    for `sync` 0/1 the words are `madr + step*i`, `step = +4`, or `-4` when `chcr & 2` (ordering-table clear, ch6);
+    counts are capped at 0x100000 words. `n` = number of words fed; `h` = FNV-1a 64 over the bytes of every fed word,
+    least significant byte first (offset basis `0xcbf29ce484222325`, prime `0x100000001b3`, `h = (h ^ byte) * prime mod 2^64`).
+  Reference implementation: `snapshotlib.dma_summary`; test vectors in `tests/difftest/vectors.json`; the Lua code that
+  runs inside MAME is checked against the Python definition (`tests/difftest/test_integration_mame.py`, needs MAME).
+  *Verified on MAME (1500 frames):* ch2 with `chcr 0x01000401` (GPU linked lists) and `0x01000201` (VRAM block uploads),
+  ch6 `0x11000002` (ordering table clear) and ch5 `0x01000000` (burst into RAM; sizes 1..1696 words, 750 starts, each preceded by one write to
+  the DMA-offset register `0x1f700000`: very likely the banked-ROM data loads - mechanism not yet analysed).
+  Not independently verified: that the data hashed after a ch5 transfer is really the delivered data (it is non-zero and
+  repeatable, MAME completes the DMA inside the store as the live MADR proves for ch2).
 * **Chain.** `canonical text`: `W,<addr8>,<data8>`, `R,<addr8>,<data8>`, `D,<ch>,<chcr8>,<madr8>,<bcr8>,<n>,<h16>`
   (lower case hex, zero padded; `n` decimal). Chain: `h0 = SHA256("ttt-difftest-events/1")` (hex string),
   `h_i = SHA256(hex(h_{i-1}) + "|" + text_i)` (hex of the UTF-8 bytes of that string), one chain for `W`+`D`
@@ -179,7 +188,23 @@ config (`cpu.ignore_fields`, `cpu.masks`, `ram.ignore_ranges`, `events.ignore_ra
 no floats) of the snapshot WITHOUT the keys `producer`, `meta`, `snapshot_sha256` and without `events.file`. The
 candidate may omit it. It is used to show that two runs of the same producer are byte-identical in content.
 
-## 8. How the reference is produced / compared
+## 8. Reference facts and known limits (golden snapshot, `reports/trace_a09/golden/`)
+
+* 27 checkpoints: `frame_00060 .. frame_01440` (24, every 60), `first_ram_frame` (frame 368), `pc_80010000_1`, `final` (frame 1500).
+  Frame numbers are those of MAME run with `-debug -debugger none` (needed for events and `pc_hit`); a run without the
+  debugger sees the first RAM pc at frame 367 and its frame boundaries fall at different instructions: never mix modes.
+* State at `pc_80010000_1`: pc `0x80010000`, sp `0x803fffc8`, ra `0x1fc20f5c`, SR 0, 580 write events so far (boot ROM: 545 GPU
+  GP0/GP1, 15 memory control, 9 timers, 6 SPU, 3 IRQ, 2 SIO); stack_live = 56 bytes.
+* 10380 events in 1500 frames: 9349 `W` + 1031 `D` (750 ch5 loads into RAM, 169 ch2 linked lists, 27 ch2 VRAM block uploads,
+  85 ch6 ordering-table clears), 0 `R`.
+* The RAM region table is a heuristic (see `regions_tektagt.json`); scratchpad (`0x1f800000`), VRAM, SPU/C352/H8 RAM and the
+  GTE-visible state outside the registers are not captured. Reads are not logged unless `--reads` is used.
+* MAME peculiarities the reference had to work around (all with evidence in `reports/agent09_difftest.md`): uninitialised GTE/hi/lo
+  state at start (pinned to 0), the host RTC (time frozen with an LD_PRELOAD shim), taps not firing after the boot ROM phase
+  (debugger watchpoints used), the debugger stopping after - not before - the store (DMA shadow registers).
+  A candidate must therefore start its GTE/hi/lo at 0 as well, or list the registers in `cpu.ignore_fields`.
+
+## 9. How the reference is produced / compared
 
 ```
 python3 tools/difftest/capture_mame.py --out ref.json            # frames 1500, every 60, pc_80010000_1, events

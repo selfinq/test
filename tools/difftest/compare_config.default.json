@@ -27,6 +27,7 @@
     "regions": {
       "stack": "ignore"
     },
+    "settle_id": "first_ram_frame",
     "stack_live": "exact"
   },
   "require_ids": []

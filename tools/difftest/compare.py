@@ -12,7 +12,8 @@ What is compared is decided by the normalisation config (see DEFAULT_CONFIG / co
   * per checkpoint sync type a profile: cpu exact|ignore, ram exact|static_pages|ignore, events chain|ignore.
     'pc_hit' checkpoints are instruction exact (the state may be compared bit for bit); 'frame' checkpoints are
     taken at a host frame boundary, so a candidate without cycle accurate timing cannot reproduce registers or
-    volatile memory there: only pages that never change in the reference run ('static_pages') are compared.
+    volatile memory there: only pages that stay identical in every reference checkpoint from the settle point
+    (ram.settle_id, default 'first_ram_frame') on ('static_pages') are compared, and not before the settle point.
   * per region overrides, ignore ranges (with a mandatory human readable reason), register ignore lists and bit masks,
     live-stack comparison (the dead stack below SP is garbage and never compared).
   * events: ignore ranges / kinds, and whether a shorter candidate stream is acceptable ('prefix_ok').
@@ -38,6 +39,7 @@ DEFAULT_CONFIG = {
         "regions": {"stack": "ignore"},
         "stack_live": "exact",
         "ignore_ranges": [],
+        "settle_id": "first_ram_frame",
     },
     "events": {
         "compare_sidecar": True,
@@ -114,10 +116,20 @@ def _ranges(cfg_list):
     return out
 
 
-def static_page_map(snap):
-    """{region: set(page index)} of pages whose hash is identical in every reference checkpoint that has pages."""
+def settle_index(snap, settle_id):
+    """Index (in reference capture order) of the checkpoint after which RAM is judged for static pages."""
+    for i, cp in enumerate(snap.get("checkpoints", [])):
+        if cp["id"] == settle_id:
+            return i
+    return 0
+
+
+def static_page_map(snap, settle_idx=0):
+    """{region: set(page index)} of pages whose hash is identical in every reference checkpoint from settle_idx on
+    (checkpoints without page hashes are skipped). These are the only pages a timing-approximate ('frame')
+    checkpoint may be compared on: the reference itself never changes them after the settle point."""
     seen = {}
-    for cp in snap.get("checkpoints", []):
+    for cp in snap.get("checkpoints", [])[settle_idx:]:
         for rn, e in ((cp.get("ram") or {}).get("regions") or {}).items():
             pg = e.get("pages")
             if pg is None:
@@ -160,13 +172,16 @@ def compare_cpu(rcp, ccp, mode, cfg):
     return items
 
 
-def compare_ram(rcp, ccp, mode, cfg, regions, static_pages, page_size):
+def compare_ram(rcp, ccp, mode, cfg, regions, static_pages, page_size, before_settle=False):
     items = []
     rram, cram = rcp.get("ram"), ccp.get("ram")
     if rram is None or mode == "ignore":
         return [{"path": "ram", "status": "ignored", "note": "profile ignores RAM"}] if mode == "ignore" else []
     if cram is None:
         return [{"path": "ram", "status": "unverified", "note": "candidate provides no RAM state"}]
+    if mode == "static_pages" and before_settle:
+        return [{"path": "ram", "status": "ignored",
+                 "note": "static_pages: checkpoint is before the settle point %r (image not loaded yet / loading in progress)" % cfg["ram"]["settle_id"]}]
     ign = _ranges(cfg["ram"]["ignore_ranges"])
     reg_by_name = {r["name"]: r for r in regions}
     for rn, re_ in (rram.get("regions") or {}).items():
@@ -338,13 +353,18 @@ def compare(ref, cand, cfg=None, ref_events=None, cand_events=None, context=5):
     if (ref.get("capture") or {}).get("page_size") != (cand.get("capture") or {}).get("page_size"):
         rep["notes"].append("page sizes differ (%s vs %s): page hashes are not comparable" % (
             (ref.get("capture") or {}).get("page_size"), (cand.get("capture") or {}).get("page_size")))
-    static = static_page_map(ref)
+    sidx = settle_index(ref, cfg["ram"]["settle_id"])
+    rd, cd = (ref.get("producer") or {}).get("debugger"), (cand.get("producer") or {}).get("debugger")
+    if rd is not None and cd is not None and rd != cd:
+        rep["notes"].append("MAME captures with and without the debugger have a different frame <-> emulated-time alignment "
+                            "(measured: first RAM pc at frame 368 vs 367): frame checkpoints are not comparable across modes")
+    static = static_page_map(ref, sidx)
     cand_by_id = {c["id"]: c for c in cand.get("checkpoints", [])}
     want = cfg.get("ids")
     req = set(cfg.get("require_ids") or [])
     last_good = None
     first_cp_div = None
-    for rcp in ref.get("checkpoints", []):
+    for ridx, rcp in enumerate(ref.get("checkpoints", [])):
         cid = rcp["id"]
         if want is not None and cid not in want:
             continue
@@ -361,7 +381,7 @@ def compare(ref, cand, cfg=None, ref_events=None, cand_events=None, context=5):
                 entry["items"].append({"path": "sync", "status": "unverified",
                                        "note": "sync keys differ: ref %s cand %s" % (rcp["sync"], ccp["sync"])})
             entry["items"] += compare_cpu(rcp, ccp, prof["cpu"], cfg)
-            entry["items"] += compare_ram(rcp, ccp, prof["ram"], cfg, regions, static, page_size)
+            entry["items"] += compare_ram(rcp, ccp, prof["ram"], cfg, regions, static, page_size, ridx < sidx)
             entry["items"] += compare_events_chain(rcp, ccp, prof["events"], cfg)
         entry["status"] = STATUS_BY_RANK[worst(entry["items"])]
         pos = None
@@ -510,7 +530,13 @@ def main(argv=None):
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
         print("compare: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 2
-    print(json.dumps(rep, indent=1, sort_keys=True) if a.json else format_report(rep, a.verbose))
+    try:
+        print(json.dumps(rep, indent=1, sort_keys=True) if a.json else format_report(rep, a.verbose))
+    except BrokenPipeError:          # e.g. `compare.py ... | head`
+        try:
+            sys.stdout.close()
+        except OSError:
+            pass
     if rep["verdict"] == "DIVERGE":
         return 1
     if rep["verdict"] == "UNVERIFIED" and a.strict_unverified:
