@@ -1,0 +1,17 @@
+[RecompOne] RAW image /home/user/test/generated/ttt_image.bin (398350 bytes) base=0x80010000 entry=0x80010000
+[Recompiler] processing main executable
+[Recompiler] added entry point function at 0x80010000
+[Recompiler] escape scan found 1674 entry point(s) in main
+[Recompiler] main: 24 function(s) grew to cover thei jump tables
+[Recompiler] main: found jump tables in 80 function(s), 7684 entries in total
+[Recompiler] escape scan found 11 entry point(s) in main
+[Recompiler] raw/arcade mode: PS1 SDK HLE patches (SdkPatches) NOT applied
+[Recompiler] total functions: 3418
+[Recompiler] emiting main.cs (3418 functions)
+[Recompiler] raw/arcade mode: PS1 Entry.cs NOT emitted (System 12 runtime NOT IMPLEMENTED)
+[Recompiler] finished 
+[RecompOne] Recompilation finished.
+
+real	0m27.098s
+user	0m15.744s
+sys	0m13.972s
