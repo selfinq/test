@@ -26,3 +26,4 @@ reports/trace_a*/work/
 reports/a01_run_nonstrict.log
 **/at28c16
 **/nvram_seed/
+reports/trace_a*/**/*.gz

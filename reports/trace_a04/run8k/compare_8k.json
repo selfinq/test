@@ -3,12 +3,17 @@
  "chcr_values": {
   "01000000": 24164
  },
+ "dma_banked_dmaoffset": 0,
+ "dma_banked_tektagt": 23899,
  "dma_block_bad": 11,
  "dma_block_ok": 52237,
+ "dma_mainrom": 265,
  "dma_started": 24164,
  "dma_truncated": 0,
  "dma_unchecked_blocks": 0,
- "dump_bad": 4,
+ "dma_words_total": 8926524,
+ "dump_bad": 0,
+ "dump_fixup_explained": 4,
  "dump_ok": 8,
  "events": 304738,
  "final": {
@@ -866,17 +871,15 @@
   "12661": 1,
   "14652": 1
  },
+ "src_max": 52471836,
+ "src_min": 0,
  "unmodelled_lane": 0
 }
-PROBLEMS (first 15):
+PROBLEMS (first 11):
    DMAPOST seq 65 block 0 hash mismatch (addr 00301a00 size 82)
-   DMADUMP seq 65 file dma_dump_06.bin differs from model
    DMAPOST seq 75 block 0 hash mismatch (addr 00301b48 size 16)
-   DMADUMP seq 75 file dma_dump_08.bin differs from model
    DMAPOST seq 85 block 0 hash mismatch (addr 00301b88 size 14)
-   DMADUMP seq 85 file dma_dump_10.bin differs from model
    DMAPOST seq 95 block 0 hash mismatch (addr 00301bc0 size 6)
-   DMADUMP seq 95 file dma_dump_12.bin differs from model
    DMAPOST seq 171 block 0 hash mismatch (addr 00301d10 size 14)
    DMAPOST seq 203 block 0 hash mismatch (addr 00301db0 size 20)
    DMAPOST seq 521 block 0 hash mismatch (addr 00302208 size 8)
