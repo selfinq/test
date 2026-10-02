@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      System12.Runtime - Namco System 12 memory map / bus for statically recompiled code.
+      Owner of this csproj: runtime-core agent (agent05).
+
+      Sibling agents add sub-folders (Banked/, Input/, Sound/, Gpu/, ...). Default SDK globbing
+      (**/*.cs) picks them up automatically, including folders that appear later.
+      If a sibling folder is broken, it does not have to block the core build:
+          dotnet build -p:S12ExcludeFolders="Gpu;Sound"
+      removes Gpu/** and Sound/** from compilation (semicolon separated, relative to this dir).
+      See reports/agent05_runtime_core.md.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RootNamespace>System12.Runtime</RootNamespace>
+        <AssemblyName>System12.Runtime</AssemblyName>
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(S12ExcludeFolders)' != ''">
+        <S12Excluded Include="$(S12ExcludeFolders)" />
+        <Compile Remove="@(S12Excluded->'%(Identity)/**')" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="/home/user/work/recompone/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+    </ItemGroup>
+
+</Project>

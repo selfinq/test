@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    TttRecompHost: the future Windows executable of the Tekken Tag recompilation.
+    TODAY it only prints a status report and verifies a user-supplied ROM zip. It does NOT run the game.
+    (That is why it is not called TekkenTagTournament.exe.)
+
+    Optional inputs (all off or auto-detected, never required):
+      -p:UseSystem12Runtime=false      do not reference src/System12.Runtime even if it exists
+      -p:IncludeRecomp=true            compile generated/recomp/*.cs into the host (206 MB of C#; Roslyn ran out of
+                                       memory on that file in the one attempt recorded in reports/, so this is OFF by default)
+      -p:RecompDir=<dir>               compile <dir>/*.cs instead (one directory only: several generated/recomp*
+                                       directories define the same types and would collide)
+      -p:RecompRuntimeProject=<csproj> project the generated code needs (default: RecompOne.Runtime from the
+                                       pinned checkout at ../work/recompone, see scripts/pins.cfg)
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>TttRecompHost</AssemblyName>
+    <RootNamespace>TttHost</RootNamespace>
+    <Product>Tekken Tag recompilation host (status build)</Product>
+    <Version>0.0.1</Version>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+    <!-- framework-dependent runs also on a newer major runtime; self-contained publish ignores this -->
+    <RollForward>LatestMajor</RollForward>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <TieredPGO>false</TieredPGO>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- same suppressions the generated code needed in the earlier compile experiment -->
+    <NoWarn>$(NoWarn);CS0162;CS0164;CS0168;CS0219;CS8981;CS0649;CS1522</NoWarn>
+    <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..'))</RepoRoot>
+  </PropertyGroup>
+
+  <!-- ROM manifest ships next to the executable (also in publish output) -->
+  <ItemGroup>
+    <None Include="$(RepoRoot)tools/tektagt_manifest.json" Link="tektagt_manifest.json"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+          Condition="Exists('$(RepoRoot)tools/tektagt_manifest.json')" />
+  </ItemGroup>
+
+  <!-- System12.Runtime: referenced only if the project exists and is not disabled -->
+  <PropertyGroup>
+    <System12RuntimeProject Condition="'$(System12RuntimeProject)' == ''">$(RepoRoot)src/System12.Runtime/System12.Runtime.csproj</System12RuntimeProject>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseSystem12Runtime)' != 'false' and Exists('$(System12RuntimeProject)')">
+    <ProjectReference Include="$(System12RuntimeProject)" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(UseSystem12Runtime)' != 'false' and Exists('$(System12RuntimeProject)')">
+    <DefineConstants>$(DefineConstants);HAVE_S12_RUNTIME</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Generated recompiled code: opt-in -->
+  <PropertyGroup Condition="'$(IncludeRecomp)' == 'true' and '$(RecompDir)' == ''">
+    <RecompDir>$(RepoRoot)generated/recomp</RecompDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RecompDir)' != ''">
+    <RecompRuntimeProject Condition="'$(RecompRuntimeProject)' == ''">$(RepoRoot)../work/recompone/RecompOne.Runtime/RecompOne.Runtime.csproj</RecompRuntimeProject>
+    <DefineConstants>$(DefineConstants);HAVE_RECOMP</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(RecompDir)' != '' and Exists('$(RecompDir)')">
+    <Compile Include="$(RecompDir)/*.cs" Link="recomp/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RecompDir)' != '' and Exists('$(RecompRuntimeProject)')">
+    <ProjectReference Include="$(RecompRuntimeProject)" />
+  </ItemGroup>
+  <Target Name="CheckRecompInputs" BeforeTargets="BeforeBuild;CoreCompile" Condition="'$(RecompDir)' != ''">
+    <Error Condition="!Exists('$(RecompDir)')" Text="RecompDir '$(RecompDir)' does not exist: run scripts/regenerate first." />
+    <Error Condition="!Exists('$(RecompRuntimeProject)')" Text="Generated code needs a runtime project; '$(RecompRuntimeProject)' does not exist (set -p:RecompRuntimeProject=...)." />
+  </Target>
+
+</Project>

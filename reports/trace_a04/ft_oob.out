@@ -1,0 +1,5 @@
+writing bank 27 (valid)
+window now	00000000
+writing bank 28 (one past the end)
+Ignoring MAME exception: memory_bank::set_entry called for bank ':mainbank' with invalid bank entry 28
+Average speed: 63.97% (59 seconds)

@@ -1,0 +1,50 @@
+diff --git a/RecompOne.Recompiler/CodeGen/FunctionEmmiter.cs b/RecompOne.Recompiler/CodeGen/FunctionEmmiter.cs
+index a5ec45a..03de5bf 100644
+--- a/RecompOne.Recompiler/CodeGen/FunctionEmmiter.cs
++++ b/RecompOne.Recompiler/CodeGen/FunctionEmmiter.cs
+@@ -6,6 +6,9 @@ namespace RecompOne.Recompiler.CodeGen;
+ 
+ public static class FunctionEmitter
+ {
++    //concrete memory class the emitted code casts IMemory to (a sealed-class call is faster than interface dispatch)
++    public static string MemoryType { get; set; } = "PSMemory";
++
+     public static string Emit(MipsFunction func, FunctionContext ctx)
+     {
+         var sb = new StringBuilder();
+@@ -108,7 +111,7 @@ public static class FunctionEmitter
+         sb.AppendLine("    {");
+         if (text.Contains("mem."))
+             sb.AppendLine(
+-                "        var mem = (PSMemory)m;"); //turns out the interface causes lag acess bruh, im too lazy to fix a bunch of patches on symphony so doing this way will be enough, this is not a good principiality please never do what i did here xD
++                $"        var mem = ({MemoryType})m;"); //turns out the interface causes lag acess bruh, im too lazy to fix a bunch of patches on symphony so doing this way will be enough, this is not a good principiality please never do what i did here xD
+         sb.Append(text);
+         sb.AppendLine("    }");
+         return sb.ToString();
+diff --git a/RecompOne.Recompiler/Config/ConfigLoader.cs b/RecompOne.Recompiler/Config/ConfigLoader.cs
+index 294d49b..c5e51c6 100644
+--- a/RecompOne.Recompiler/Config/ConfigLoader.cs
++++ b/RecompOne.Recompiler/Config/ConfigLoader.cs
+@@ -38,6 +38,10 @@ public sealed class RecompOneConfig
+     } //linear sweep is to find functions when the elf doesnt ptovide then properly (fuck you sh) this can and WILL get some data as code, use it by your own risk
+ 
+     [JsonPropertyName("debug")] public bool Debug { get; set; }
++
++    //type the generated code casts its IMemory argument to (fully qualified). PSMemory = stock PS1 behaviour.
++    //System 12: "System12.Runtime.Core.System12Memory"
++    [JsonPropertyName("memoryType")] public string MemoryType { get; set; } = "PSMemory";
+     [JsonPropertyName("addressComments")] public bool AddressComments { get; set; }
+     [JsonPropertyName("disasmComments")] public bool DisasmComments { get; set; }
+     [JsonPropertyName("overlays")] public OverlayConfig[] Overlays { get; set; } = [];
+diff --git a/RecompOne.Recompiler/Program.cs b/RecompOne.Recompiler/Program.cs
+index 36ae84b..60b3f30 100644
+--- a/RecompOne.Recompiler/Program.cs
++++ b/RecompOne.Recompiler/Program.cs
+@@ -34,6 +34,7 @@ if (!File.Exists(configPath))
+ }
+ 
+ var config = ConfigLoader.Load(configPath);
++RecompOne.Recompiler.CodeGen.FunctionEmitter.MemoryType = config.MemoryType;
+ var configDir = Path.GetDirectoryName(configPath)!;
+ 
+ string? ResolvePath(string? p)

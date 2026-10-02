@@ -1,0 +1,310 @@
+diff --git a/RecompOne.Recompiler/Analysis/FunctionDetector.cs b/RecompOne.Recompiler/Analysis/FunctionDetector.cs
+index dfdfaaf..d55f9ff 100644
+--- a/RecompOne.Recompiler/Analysis/FunctionDetector.cs
++++ b/RecompOne.Recompiler/Analysis/FunctionDetector.cs
+@@ -76,8 +76,11 @@ public static class FunctionDetector
+ 
+             var si = InstrIndex(all, start);
+             if (si < 0) continue;
+-            var ei = Math.Clamp(RefineEnd(all, si, InstrIndex(all, maxEnd)), si + 1, all.Length);
++            var ei = Math.Clamp(RefineEnd(all, si, InstrIndex(all, maxEnd), 0, out var endKind), si + 1, all.Length);
+             if (SliceHasUnknownInstruction(all, si, ei)) continue;
++            //strict: a scan seed that runs into data / the next entry before any return is a misdecoded jal/pointer, not a function
++            if (DetectorOptions.Strict && endKind != EndKind.Terminated) continue;
++            if (IsJunkBody(all, si, ei)) continue;
+ 
+             var name = $"func_{start:X8}";
+             funcs.Add(new MipsFunction
+@@ -112,6 +115,7 @@ public static class FunctionDetector
+ 
+             var extEnd = existingStarts.FirstOrDefault(s => s > addr, codeEnd);
+             var endIdx = Math.Clamp(RefineEnd(all, startIdx, InstrIndex(all, extEnd)), startIdx + 1, all.Length);
++            if (IsJunkBody(all, startIdx, endIdx)) continue;
+ 
+             var name = nameHint ?? $"func_{addr:X8}";
+             result.Add(new MipsFunction
+@@ -311,6 +315,65 @@ public static class FunctionDetector
+             : DetectFromAddresses(all, targets.Select(t => (t, (string?)null)), existing, overlayName);
+     }
+ 
++    //strict mode only. Compilers lay functions out back to back, so the code after the end of a known function
++    //(skipping alignment nops) is the next function even when nothing calls it directly (callbacks, vtables, leaf
++    //functions reached through data pointers). Each candidate must decode cleanly and reach a real terminator, so
++    //this stops at data instead of walking through it.
++    public static List<MipsFunction> DiscoverAdjacent(MipsInstruction[] all, List<MipsFunction> existing,
++        string overlayName)
++    {
++        var result = new List<MipsFunction>();
++        if (all.Length == 0 || !DetectorOptions.Strict) return result;
++
++        var codeEnd = all[^1].Vram + 4;
++        var covered = new bool[all.Length];
++        var startsAt = new HashSet<uint>();
++        foreach (var f in existing)
++        {
++            startsAt.Add(f.Start);
++            var a = InstrIndex(all, f.Start);
++            var b = Math.Min(InstrIndex(all, f.End), all.Length);
++            for (var k = Math.Max(a, 0); k < b; k++) covered[k] = true;
++        }
++
++        var queue = new Queue<int>();
++        foreach (var f in existing)
++        {
++            var e = InstrIndex(all, f.End);
++            if (e >= 0 && e < all.Length) queue.Enqueue(e);
++        }
++
++        while (queue.Count > 0)
++        {
++            var i = queue.Dequeue();
++            while (i < all.Length && !covered[i] && all[i].IsNop) i++;
++            if (i >= all.Length || covered[i]) continue;
++            if (!IsKnownInstruction(all[i]) || !IsPlausibleInStrict(all[i])) continue;
++
++            var bound = i + 1;
++            while (bound < all.Length && !covered[bound]) bound++;
++
++            var ei = Math.Clamp(RefineEnd(all, i, bound, 0, out var kind), i + 1, all.Length);
++            if (kind != EndKind.Terminated || IsJunkBody(all, i, ei) || SliceHasUnknownInstruction(all, i, ei)) continue;
++
++            var addr = all[i].Vram;
++            var name = $"func_{addr:X8}";
++            result.Add(new MipsFunction
++            {
++                Name = name,
++                OverlayName = overlayName,
++                EmittedName = name,
++                Start = addr,
++                End = all[ei - 1].Vram + 4,
++                Instructions = all[i..ei]
++            });
++            for (var k = i; k < ei; k++) covered[k] = true;
++            queue.Enqueue(ei);
++        }
++
++        return result;
++    }
++
+     private static bool FallsThrough(MipsInstruction[] instrs)
+     {
+         if (instrs.Length == 0) return false;
+@@ -570,6 +633,25 @@ public static class FunctionDetector
+         return i.Word >> 26 == 9 && i.Rs == 29 && i.Rt == 29 && i.ImmS < 0;
+     }
+ 
++    //strict mode: decodes fine but compilers never emit it: load/store based on $zero (absolute 16 bit address).
++    //Jump table entries (0x80xxxxxx = lb $x, off($zero)) and other data words look exactly like this.
++    private static bool IsPlausibleInStrict(MipsInstruction i)
++    {
++        var op = i.Word >> 26;
++        var isMem = op is >= 32 and <= 46 || op is 50 or 58;
++        return !(isMem && i.Rs == 0);
++    }
++
++    //strict mode: a body that is only nops (zero-filled memory) is not a function
++    private static bool IsJunkBody(MipsInstruction[] all, int startIdx, int endIdx)
++    {
++        if (!DetectorOptions.Strict) return false;
++        for (var i = startIdx; i < endIdx; i++)
++            if (!all[i].IsNop)
++                return false;
++        return true;
++    }
++
+     private static bool SliceHasUnknownInstruction(MipsInstruction[] all, int startIdx, int endIdx)
+     {
+         for (var i = startIdx; i < endIdx; i++)
+@@ -622,7 +704,7 @@ public static class FunctionDetector
+         }
+ 
+         var ei = Math.Clamp(RefineEnd(all, si, InstrIndex(all, maxEnd)), si + 1, all.Length);
+-        if (SliceHasUnknownInstruction(all, si, ei)) return null;
++        if (SliceHasUnknownInstruction(all, si, ei) || IsJunkBody(all, si, ei)) return null;
+         return new MipsFunction
+         {
+             Name = name,
+@@ -637,20 +719,70 @@ public static class FunctionDetector
+     //hard to explain, used to help find the correct end of the function, wich sometimes can be hard since you can have multiple return points ina  function, this TRIES to get the true end of it
+     private static int RefineEnd(MipsInstruction[] all, int startIdx, int maxEndIdx, uint floor = 0)
+     {
++        return RefineEnd(all, startIdx, maxEndIdx, floor, out _);
++    }
++
++    //how a RefineEnd ended (only meaningful in strict mode, see DetectorOptions)
++    private enum EndKind
++    {
++        Terminated, //real end found (jr/j/b followed by its delay slot)
++        RanToBound, //reached maxEnd without a terminator (falls into the next function)
++        CutByData //stopped in front of a word that is not a known instruction
++    }
++
++    private static bool IsUnconditionalTerminator(MipsInstruction i)
++    {
++        var op = i.Word >> 26;
++        if (op == 2) return true; //j
++        if (op == 4 && i.Rs == 0 && i.Rt == 0) return true; //b
++        if (op == 1 && i.Rs == 0 && i.Rt == 1) return true; //bgez $0 == b
++        return false;
++    }
++
++    private static int RefineEnd(MipsInstruction[] all, int startIdx, int maxEndIdx, uint floor, out EndKind kind)
++    {
++        var strict = DetectorOptions.Strict;
++        kind = EndKind.RanToBound;
+         maxEndIdx = Math.Clamp(maxEndIdx, startIdx + 1, all.Length);
+         var reach = Math.Max(all[startIdx].Vram, floor);
++        var nopRun = 0;
+         for (var i = startIdx; i < maxEndIdx; i++)
+         {
+             var instr = all[i];
++
++            if (strict && i > startIdx && (!IsKnownInstruction(instr) || !IsPlausibleInStrict(instr)))
++            {
++                //data (strings, tables..) ahead: cut in front of it, and drop a branch whose delay slot would be missing
++                var cut = i;
++                if (cut - 1 > startIdx && all[cut - 1].HasDelaySlot) cut--;
++                kind = EndKind.CutByData;
++                return Math.Clamp(cut, startIdx + 1, maxEndIdx);
++            }
++
++            if (strict)
++            {
++                nopRun = instr.IsNop ? nopRun + 1 : 0;
++                if (nopRun >= DetectorOptions.MaxNopRun)
++                {
++                    //zero-filled memory (bss / not yet loaded overlay / padding): not code
++                    var cut = i + 1 - nopRun;
++                    kind = EndKind.CutByData;
++                    return Math.Clamp(cut, startIdx + 1, maxEndIdx);
++                }
++            }
++
+             if (instr.IsJump || (instr.IsBranch && !instr.IsRegisterJump))
+             {
+                 var tgt = instr.IsJump ? instr.JumpTarget : instr.BranchTarget;
+-                if (tgt > reach && tgt > all[startIdx].Vram && tgt <= all[maxEndIdx - 1].Vram) reach = tgt;
++                var near = !strict || tgt <= instr.Vram || tgt - instr.Vram <= DetectorOptions.MaxIntraJump;
++                if (near && tgt > reach && tgt > all[startIdx].Vram && tgt <= all[maxEndIdx - 1].Vram) reach = tgt;
+             }
+ 
+-            if (IsFunctionEnd(all, startIdx, i) && instr.Vram >= reach)
++            var isEnd = IsFunctionEnd(all, startIdx, i) || (strict && IsUnconditionalTerminator(instr));
++            if (isEnd && instr.Vram >= reach)
+             {
+                 var end = i + 2; // include the delay slot
++                kind = EndKind.Terminated;
+                 if (!HasBlindJump(all, startIdx, end)) return Math.Clamp(end, startIdx + 1, maxEndIdx);
+ 
+                 while (true)
+@@ -707,6 +839,7 @@ public static class FunctionDetector
+         {
+             var instr = all[i];
+             if (instr.Vram > bodyEnd + TailWindow) break;
++            if (DetectorOptions.Strict && !IsKnownInstruction(instr)) break;
+             if (!instr.IsJump && (!instr.IsBranch || instr.IsRegisterJump)) continue;
+ 
+             var tgt = instr.IsJump ? instr.JumpTarget : instr.BranchTarget;
+diff --git a/RecompOne.Recompiler/Analysis/FunctionPipeline.cs b/RecompOne.Recompiler/Analysis/FunctionPipeline.cs
+index 3f959da..55c3aff 100644
+--- a/RecompOne.Recompiler/Analysis/FunctionPipeline.cs
++++ b/RecompOne.Recompiler/Analysis/FunctionPipeline.cs
+@@ -20,6 +20,7 @@ public static class FunctionPipeline
+         DiscoverCalls(funcs, instrs, elfInfo.NoTypeSymbols, name);
+         AddConfigFunctions(funcs, options.ConfigFunctions, instrs, elfInfo.NoTypeSymbols, name);
+ 
++        if (DetectorOptions.Strict) Adjacent(funcs, instrs, elfInfo.NoTypeSymbols, name);
+         if (options.LinearSweep) Sweep(funcs, instrs, elfInfo.NoTypeSymbols, name);
+         if (options.PointerScan) ScanPointers(funcs, instrs, elfInfo.NoTypeSymbols, name);
+ 
+@@ -75,9 +76,24 @@ public static class FunctionPipeline
+     public static void ScanEscapesToFixpoint(IReadOnlyList<ImageFunctions> images)
+     {
+         foreach (var image in images)
++        {
+             while (ScanEscapes(image.Functions, image.Instructions, image.Name))
+             {
+             }
++
++            DumpFunctionMap(image);
++        }
++    }
++
++    //debug aid: RECOMPONE_FNMAP_OUT=<file> writes "start end instrCount" (hex addresses) for every detected function
++    private static void DumpFunctionMap(ImageFunctions image)
++    {
++        var path = Environment.GetEnvironmentVariable("RECOMPONE_FNMAP_OUT");
++        if (string.IsNullOrEmpty(path)) return;
++        using var w = new StreamWriter(path);
++        foreach (var f in image.Functions.OrderBy(f => f.Start))
++            w.WriteLine($"{f.Start:X8}\t{f.End:X8}\t{f.Instructions.Length}\t{f.Name}");
++        Console.WriteLine($"[Recompiler] function map written to {path}");
+     }
+ 
+     private static void DiscoverCalls(List<MipsFunction> funcs, MipsInstruction[] instrs,
+@@ -124,6 +140,25 @@ public static class FunctionPipeline
+         Console.WriteLine($"[Recompiler] added {extras.Count} config function(s) (+{callees.Count} callees) to {name}");
+     }
+ 
++    //strict mode: functions that directly follow a known function (see FunctionDetector.DiscoverAdjacent)
++    private static void Adjacent(List<MipsFunction> funcs, MipsInstruction[] instrs,
++        IEnumerable<FunctionEntry> noTypeSymbols, string name)
++    {
++        var total = 0;
++        while (true)
++        {
++            var adj = FunctionDetector.DiscoverAdjacent(instrs, funcs, name);
++            if (adj.Count == 0) break;
++            funcs.AddRange(adj);
++            total += adj.Count;
++            var callees = FunctionDetector.DiscoverCalls(instrs, funcs, noTypeSymbols, name);
++            funcs.AddRange(callees);
++            total += callees.Count;
++        }
++
++        if (total > 0) Console.WriteLine($"[Recompiler] adjacency scan found {total} function(s) in {name}");
++    }
++
+     private static void Sweep(List<MipsFunction> funcs, MipsInstruction[] instrs,
+         IEnumerable<FunctionEntry> noTypeSymbols, string name)
+     {
+diff --git a/RecompOne.Recompiler/Analysis/DetectorOptions.cs b/RecompOne.Recompiler/Analysis/DetectorOptions.cs
+new file mode 100644
+index 0000000..82f9865
+--- /dev/null
++++ b/RecompOne.Recompiler/Analysis/DetectorOptions.cs
+@@ -0,0 +1,34 @@
++namespace RecompOne.Recompiler.Analysis;
++
++//Switches for the function detector. Defaults keep the original (disc game) behaviour.
++//Strict mode is meant for raw images (arcade) where data is interleaved with code and there is no symbol info:
++//  * a function also ends at an unconditional j / b (after its delay slot) once no earlier branch reaches past it
++//  * a function never contains a word that does not decode to a known instruction (it is cut in front of it)
++//  * a run of MaxNopRun nops (zero-filled memory) ends a function, nop-only bodies are rejected
++//  * forward j/b targets farther than MaxIntraJump bytes are treated as tail calls and do not extend the function
++//  * functions found only by scanning (jal targets / prologue pointers) must reach a real end, otherwise they are rejected
++//Enable with env RECOMPONE_STRICT_DETECT=1 (config wiring is up to Program.cs/ConfigLoader.cs, not touched here).
++public static class DetectorOptions
++{
++    public static bool Strict { get; set; } = IsOn("RECOMPONE_STRICT_DETECT");
++
++    //this many consecutive nops (zero words) end a function; a body made only of nops is rejected
++    public static int MaxNopRun { get; set; } = (int)ReadHex("RECOMPONE_MAX_NOP_RUN", 16);
++
++    public static uint MaxIntraJump { get; set; } = ReadHex("RECOMPONE_MAX_INTRA_JUMP", 0x2000);
++
++    private static bool IsOn(string name)
++    {
++        var v = Environment.GetEnvironmentVariable(name);
++        return v is "1" or "true" or "TRUE" or "True" or "on";
++    }
++
++    private static uint ReadHex(string name, uint def)
++    {
++        var v = Environment.GetEnvironmentVariable(name);
++        if (string.IsNullOrWhiteSpace(v)) return def;
++        v = v.Trim();
++        if (v.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) v = v[2..];
++        return uint.TryParse(v, System.Globalization.NumberStyles.HexNumber, null, out var r) ? r : def;
++    }
++}

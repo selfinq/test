@@ -1,0 +1,9 @@
+{
+  "game": { "name": "TekkenTagArcade", "id": "tektagt-teg2verc1", "output": "../generated/recomp_a01" },
+  "image": "../generated/ttt_image.bin",
+  "imageBase": "0x80010000",
+  "entry": "0x80010000",
+  "initialSp": "0x803fffc8",
+  "linearSweep": false,
+  "pointerScan": false
+}

@@ -1,0 +1,23 @@
+{
+  "_comment": "RAM regions used by the tektagt differential snapshots. Addresses are KSEG0 virtual addresses (0x80000000 + physical). The regions tile the whole 4 MB RAM without gaps or overlaps (checked by snapshotlib.check_regions). PROVISIONAL: the boundaries are heuristic, derived from two MAME RAM dumps of the real game (frame 367 'first RAM PC' and frame 1500) at 4 KB granularity, NOT from a linker map (the game image is a raw blob, there is no ELF). Evidence per region is in 'evidence'. Per-page hashes (page_size) in every snapshot allow the boundaries to be refined later without recapturing the reference.",
+  "page_size": 4096,
+  "ram_base": "0x80000000",
+  "ram_size": 4194304,
+  "stack_top": "0x80400000",
+  "regions": [
+    {"name": "kernel",  "base": "0x80000000", "size": 65536,
+     "evidence": "0x0..0x9000 holds MIPS code (jr ra / addiu sp density), exception vectors at 0x80, 3 of 16 pages change between frame 367 and 1500"},
+    {"name": "data",    "base": "0x80010000", "size": 954368,
+     "evidence": "0x80010000..0x800f9000: loaded image head, no function epilogues; pages 0x80030000..0x800a0000 change continuously (work buffers)"},
+    {"name": "code",    "base": "0x800f9000", "size": 634880,
+     "evidence": "0x800f9000..0x80194000: every page has jr ra / addiu sp,sp,-N density >= 4 except a few data-in-text pages; 0x18f000,0x193000 pages change (embedded variables)"},
+    {"name": "rodata",  "base": "0x80194000", "size": 720896,
+     "evidence": "0x80194000..0x80244000: no function epilogues, nonzero, last nonzero word of the loaded image at 0x8024349c; mostly unchanged"},
+    {"name": "bss",     "base": "0x80244000", "size": 1683456,
+     "evidence": "0x80244000..0x803df000: all-zero at frame 367 (image tail is zero filled), written later (heap/bss)"},
+    {"name": "overlay", "base": "0x803df000", "size": 69632,
+     "evidence": "0x803df000..0x803f0000: code-like pages appear here after frame 367 (overlay loaded from banked ROM, seen near 0x803eff54)"},
+    {"name": "stack",   "base": "0x803f0000", "size": 65536,
+     "evidence": "initial sp 0x803fffc8; top of RAM; dead part below sp is garbage -> compare stack_live instead"}
+  ]
+}

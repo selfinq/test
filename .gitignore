@@ -12,3 +12,17 @@ bin/
 obj/
 __pycache__/
 *.pyc
+
+# build outputs of the new projects
+src/**/bin/
+src/**/obj/
+host/**/bin/
+host/**/obj/
+
+# traces / game-run state produced by agents: local only
+reports/trace_a*/**/*.txt
+reports/trace_a*/**/*.log
+reports/trace_a*/work/
+reports/a01_run_nonstrict.log
+**/at28c16
+**/nvram_seed/

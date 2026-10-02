@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      Tests run without game data (synthetic ROM image). By default the Core sources are compiled directly into the
+      test assembly, so a broken sibling folder (Banked/, Input/, Sound/, Gpu/) cannot block these tests.
+      Use -p:S12TestFullProject=true to reference the whole System12.Runtime project instead.
+    -->
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+        <RootNamespace>System12.Runtime.Tests</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+        <PackageReference Include="xunit" Version="2.*" />
+        <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(S12TestFullProject)' == 'true'">
+        <ProjectReference Include="../System12.Runtime/System12.Runtime.csproj" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(S12TestFullProject)' != 'true'">
+        <Compile Include="../System12.Runtime/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+        <ProjectReference Include="/home/user/work/recompone/RecompOne.Runtime/RecompOne.Runtime.csproj" />
+    </ItemGroup>
+
+</Project>
