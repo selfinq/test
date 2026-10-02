@@ -33,7 +33,7 @@ local count = 0
 local tstart = os.clock()
 for _, r in ipairs(ranges) do
   for a = r[1], r[2] - 4, 4 do
-    local i = dbg:bpset(a, "", verb .. nxt .. ";go")
+    local i = dbg:bpset(a, "", string.format("%s%x;go", verb, nxt))  -- NB: debugger numbers are HEX
     if i ~= nxt then error(string.format("bp index mismatch: got %d expected %d", i, nxt)) end
     addr_of[i] = a
     nxt = nxt + 1

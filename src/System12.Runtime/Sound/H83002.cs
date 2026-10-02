@@ -102,20 +102,23 @@ public sealed class H8Intc : IH8InterruptSource
 
     private static int IcrBitFor(int vec)
     {
-        // Returns the ICR bit (0..15, ICRA=0..7, ICRB=8..15) of the priority-select bit for a vector, or -1.
-        if (vec == 12) return 7;               // IRQ0
-        if (vec == 13) return 6;               // IRQ1
-        if (vec == 14 || vec == 15) return 5;  // IRQ2,3
-        if (vec == 16 || vec == 17) return 4;  // IRQ4,5
-        if (vec == 20 || vec == 21 || vec == 60) return 3; // WDT, refresh, ADC
-        if (vec >= 24 && vec <= 26) return 2;  // ITU0
-        if (vec >= 28 && vec <= 30) return 1;  // ITU1
-        if (vec >= 32 && vec <= 34) return 0;  // ITU2
-        if (vec >= 36 && vec <= 38) return 15; // ITU3 (ICRB bit7)
-        if (vec >= 40 && vec <= 42) return 14; // ITU4 (ICRB bit6)
-        if (vec >= 44 && vec <= 47) return 13; // DMAC
-        if (vec >= 52 && vec <= 55) return 12; // SCI0
-        if (vec >= 56 && vec <= 59) return 11; // SCI1
+        // Returns the ICR priority bit (0..15, ICRA = bits 0..7, ICRB = bits 8..15) of a vector, or -1.
+        // Mapping follows MAME's h8h_intc_device::vector_to_slot (bit = slot ^ 7), which is the reference behaviour used here:
+        if (vec == 12) return 7;                 // IRQ0
+        if (vec == 13) return 6;                 // IRQ1
+        if (vec == 14 || vec == 15) return 5;    // IRQ2,3
+        if (vec >= 16 && vec <= 19) return 4;    // IRQ4,5
+        if (vec >= 20 && vec <= 23) return 3;    // WDT, refresh, (ADI on other family members)
+        if (vec >= 24 && vec <= 27) return 2;    // ITU0
+        if (vec >= 28 && vec <= 31) return 1;    // ITU1
+        if (vec >= 32 && vec <= 35) return 0;    // ITU2
+        if (vec >= 36 && vec <= 39) return 15;   // ITU3
+        if (vec >= 40 && vec <= 43) return 14;   // ITU4
+        if (vec >= 44 && vec <= 47) return 13;   // DMAC
+        if (vec >= 48 && vec <= 51) return 12;   // reserved
+        if (vec >= 52 && vec <= 55) return 11;   // SCI0
+        if (vec >= 56 && vec <= 59) return 10;   // SCI1
+        if (vec >= 60 && vec <= 63) return 9;    // ADI (H8/3002 vector 60)
         return -1;
     }
 
@@ -498,6 +501,7 @@ public sealed class H8Adc
 {
     private readonly H83002 _soc;
     public byte Adcsr, Adcr;
+    private bool _adtrg = true;
     public readonly ushort[] Addr = new ushort[4];
     public long EventTime;
     private int _channel;
@@ -505,6 +509,18 @@ public sealed class H8Adc
     public H8Adc(H83002 soc) { _soc = soc; }
 
     public byte ReadAddrByte(int offset) => (offset & 1) != 0 ? (byte)(Addr[offset >> 1] << 6) : (byte)(Addr[offset >> 1] >> 2);
+
+    /// <summary>ADTRG pin (wired to the screen vblank on System 12). External trigger = falling edge of the pin level when ADCR.TRGE (bit 7) is set.</summary>
+    public void Adtrg(bool state, long now)
+    {
+        if (state == _adtrg) return;
+        _adtrg = state;
+        if (!_adtrg && (Adcr & 0x80) != 0 && (Adcsr & 0x20) == 0)
+        {
+            Adcsr |= 0x20;
+            Start(now);
+        }
+    }
 
     public void WriteAdcsr(byte v, long now)
     {
@@ -631,6 +647,8 @@ public sealed class H83002 : IH8Bus
     private readonly byte[] _ddr = new byte[12], _dr = new byte[12];
     private long _nextEvent;
     public long UnmappedReads, UnmappedWrites;
+    /// <summary>Debug/test hook called with the PC before every executed instruction (null in production).</summary>
+    public Action<uint>? StepHook;
 
     public H83002(byte[] programRom, IH83002Board board)
     {
@@ -697,6 +715,7 @@ public sealed class H83002 : IH8Bus
                 if (Cpu.States >= untilStates) break;
                 continue;
             }
+            StepHook?.Invoke(Cpu.PC);
             Cpu.Step();
             if (Cpu.States >= _nextEvent) ServiceEvents();
         }

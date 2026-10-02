@@ -144,6 +144,22 @@ public sealed class SharedRamInputMonitor
         _out = outputs ?? throw new ArgumentNullException(nameof(outputs));
     }
 
+    /// <summary>
+    /// Reader over a 64 KiB big-endian shared RAM image indexed from H8 address 0x080000 (the layout of S12SoundBoard.SharedRam):
+    /// returns the 16-bit word at H8 address <c>h8Address</c> (0x080000..0x08fffe).
+    /// </summary>
+    public static Func<int, ushort> BigEndianReader(byte[] sharedRam64K)
+    {
+        ArgumentNullException.ThrowIfNull(sharedRam64K);
+        if (sharedRam64K.Length < 0x10000) throw new ArgumentException("shared RAM image must be 0x10000 bytes", nameof(sharedRam64K));
+        return h8 =>
+        {
+            var o = h8 - 0x80000;
+            if ((uint)o > 0xfffe) throw new ArgumentOutOfRangeException(nameof(h8));
+            return (ushort)((sharedRam64K[o] << 8) | sharedRam64K[o + 1]);
+        };
+    }
+
     public ArcadeInputState LastPublishedState { get; private set; }
 
     public void Poll(long frame)

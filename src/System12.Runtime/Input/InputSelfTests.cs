@@ -409,6 +409,11 @@ public static class InputSelfTests
         r.Check("outputs: lamps / coin coil / lockout declared NotPresentInReference (never raised)",
             ArcadeOutputs.Catalog.Count(c => c.Support == OutputSupport.NotPresentInReference) == 4);
         r.Check("outputs: poll with no change raises nothing", Quiet(mon, evs));
+        var img = new byte[0x10000];
+        img[0x3900] = 0x00; img[0x3901] = 0x02;                              // H8 0x83900 = 0x0002 (big endian bytes)
+        var rd = SharedRamInputMonitor.BigEndianReader(img);
+        r.Check("outputs: BigEndianReader matches the S12SoundBoard.SharedRam layout", rd(0x83900) == 2 && rd(0x83901 - 1) == 2 && rd(0x83902) == 0);
+        r.Check("outputs: BigEndianReader rejects addresses outside 0x80000..0x8fffe", Throws<ArgumentOutOfRangeException>(() => rd(0x90000)));
     }
 
     private static bool Quiet(SharedRamInputMonitor mon, List<ArcadeOutputEvent> evs) { var n = evs.Count; mon.Poll(6); mon.Poll(7); return evs.Count == n; }

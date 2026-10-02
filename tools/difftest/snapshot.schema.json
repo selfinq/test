@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ttt-difftest-snapshot/1",
+  "title": "tektagt differential-test snapshot, format ttt-difftest-snapshot/1",
+  "description": "One snapshot = a list of checkpoints taken at defined sync points of one run, plus the event stream summary. Produced by tools/difftest/capture_mame.py (MAME reference) and, by contract (docs/difftest/CANDIDATE_SNAPSHOT.md), by the recompiled C# runtime. All integers are hex strings '0x%08x' unless stated, all hashes lower-case hex.",
+  "type": "object",
+  "required": ["schema", "game", "capture", "regions", "checkpoints"],
+  "properties": {
+    "schema": {"const": "ttt-difftest-snapshot/1"},
+    "game": {"const": "tektagt"},
+    "producer": {"type": "object", "description": "who wrote the file; NOT part of snapshot_sha256"},
+    "meta": {"type": "object", "description": "host/run information; NOT part of snapshot_sha256"},
+    "snapshot_sha256": {"$ref": "#/$defs/sha256", "description": "sha256 of the canonical JSON (sorted keys, no whitespace) of the object without producer, meta, snapshot_sha256 and events.file"},
+    "capture": {
+      "type": "object",
+      "required": ["ram_base", "ram_size", "page_size"],
+      "properties": {
+        "ram_base": {"$ref": "#/$defs/hex32"},
+        "ram_size": {"type": "integer", "minimum": 4096},
+        "page_size": {"type": "integer", "minimum": 16},
+        "stack_top": {"$ref": "#/$defs/hex32"},
+        "nvram_seed_sha256": {"$ref": "#/$defs/sha256"},
+        "frames": {"type": "integer"}, "every": {"type": "integer"},
+        "pcs": {"type": "array", "items": {"type": "string"}},
+        "events_enabled": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "regions": {
+      "type": "array", "minItems": 1,
+      "description": "tile the RAM window [ram_base, ram_base+ram_size) in ascending order without gaps",
+      "items": {"type": "object", "required": ["name", "base", "size"],
+                "properties": {"name": {"type": "string"}, "base": {"$ref": "#/$defs/hex32"}, "size": {"type": "integer", "minimum": 1}}}
+    },
+    "checkpoints": {"type": "array", "items": {"$ref": "#/$defs/checkpoint"}},
+    "events": {
+      "type": "object",
+      "description": "summary of the whole event stream; the stream itself is the JSON-lines sidecar events.file",
+      "required": ["w_count", "w_chain", "r_count", "r_chain"],
+      "properties": {
+        "w_count": {"type": "integer", "minimum": 0}, "w_chain": {"$ref": "#/$defs/sha256"},
+        "r_count": {"type": "integer", "minimum": 0}, "r_chain": {"$ref": "#/$defs/sha256"},
+        "file": {"type": "string"}, "truncated": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "hex32": {"type": "string", "pattern": "^0x[0-9a-f]{8}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "checkpoint": {
+      "type": "object",
+      "required": ["id", "sync"],
+      "properties": {
+        "id": {"type": "string", "description": "unique key used to pair reference and candidate checkpoints"},
+        "sync": {
+          "oneOf": [
+            {"type": "object", "required": ["type", "frame"], "properties": {"type": {"const": "frame"}, "frame": {"type": "integer", "minimum": 0}},
+             "description": "host frame boundary of the producer: NOT instruction exact"},
+            {"type": "object", "required": ["type", "pc", "nth"], "properties": {"type": {"const": "pc_hit"}, "pc": {"$ref": "#/$defs/hex32"}, "nth": {"type": "integer", "minimum": 1}},
+             "description": "state immediately BEFORE the nth execution of the instruction at pc: instruction exact"}
+          ]
+        },
+        "cpu": {
+          "type": "object", "required": ["pc", "gpr"],
+          "properties": {
+            "pc": {"$ref": "#/$defs/hex32"},
+            "gpr": {"type": "array", "minItems": 32, "maxItems": 32, "items": {"$ref": "#/$defs/hex32"}, "description": "r0..r31 in architectural order (zero at v0 v1 a0-a3 t0-t7 s0-s7 t8 t9 k0 k1 gp sp fp ra)"},
+            "hi": {"$ref": "#/$defs/hex32"}, "lo": {"$ref": "#/$defs/hex32"},
+            "cop0": {"type": "object", "properties": {"sr": {"$ref": "#/$defs/hex32"}, "cause": {"$ref": "#/$defs/hex32"}, "epc": {"$ref": "#/$defs/hex32"}, "badvaddr": {"$ref": "#/$defs/hex32"}}},
+            "cop2_d": {"type": "array", "minItems": 32, "maxItems": 32, "items": {"$ref": "#/$defs/hex32"}, "description": "GTE data registers 0..31"},
+            "cop2_c": {"type": "array", "minItems": 32, "maxItems": 32, "items": {"$ref": "#/$defs/hex32"}, "description": "GTE control registers 0..31"}
+          }
+        },
+        "ram": {
+          "type": "object",
+          "properties": {
+            "regions": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object", "required": ["sha256"],
+                "properties": {
+                  "sha256": {"$ref": "#/$defs/sha256", "description": "sha256 over the region bytes in ascending address order (memory byte order, i.e. little endian words)"},
+                  "pages": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{16}$"}, "description": "first 16 hex digits of sha256 of every page_size chunk of the region; the last chunk may be shorter"}
+                }
+              }
+            },
+            "stack_live": {
+              "type": "object", "required": ["base", "size", "sha256"],
+              "description": "bytes [sp & ~3, stack_top): the live stack; size 0 when sp is outside the stack region",
+              "properties": {"base": {"$ref": "#/$defs/hex32"}, "size": {"type": "integer", "minimum": 0}, "sha256": {"$ref": "#/$defs/sha256"}}
+            }
+          }
+        },
+        "events": {
+          "type": "object", "required": ["w_count", "w_chain", "r_count", "r_chain"],
+          "description": "state of the two event hash chains after the events that happened BEFORE this checkpoint",
+          "properties": {"w_count": {"type": "integer"}, "w_chain": {"$ref": "#/$defs/sha256"}, "r_count": {"type": "integer"}, "r_chain": {"$ref": "#/$defs/sha256"}}
+        },
+        "info": {"type": "object", "description": "informational only, never compared"}
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "cpu": {
+    "ignore_fields": [],
+    "masks": {}
+  },
+  "events": {
+    "compare_sidecar": true,
+    "ignore_kinds": [],
+    "ignore_ranges": [],
+    "length": "prefix_ok"
+  },
+  "ids": null,
+  "profiles": {
+    "frame": {
+      "cpu": "ignore",
+      "events": "ignore",
+      "ram": "static_pages"
+    },
+    "pc_hit": {
+      "cpu": "exact",
+      "events": "chain",
+      "ram": "exact"
+    }
+  },
+  "ram": {
+    "ignore_ranges": [],
+    "regions": {
+      "stack": "ignore"
+    },
+    "stack_live": "exact"
+  },
+  "require_ids": []
+}

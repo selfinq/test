@@ -1,7 +1,7 @@
 // System12.Runtime.Input - MMIO adapters for the main-CPU side of the System 12 "I/O" registers that belong to this module:
 //   0x1f140000-0x1f140fff  AT28C16 EEPROM   (MAME: .rw("at28c16", read, write).umask32(0x00ff00ff))
 //   0x1f018000             watchdog kick    (MAME: nopw; the watchdog is NOT enforced by MAME)
-//   0x1f008000, 0x1f010000, 0x1f1bff08-0f   (MAME: nopw; function unknown - 0x1f008000 is written by the game ~8 times/frame)
+//   0x1f008000, 0x1f010000, 0x1f1bff08-0f   (MAME: nopw; function unknown - 0x1f008000: 16-bit 0 written 9 912 times in 2 800 frames by the game, 0x1f010000: never written)
 // Original code for this project. Reference: reports/refs/namcos12.cpp maincpu_map().
 //
 // EEPROM bus semantics (verified against MAME 0.264 Lua taps, reports/trace_a08/probe_eeprom_fresh_log.txt):
@@ -79,7 +79,8 @@ public sealed class EepromIoDevice : MmioDeviceBase, IMmioTraceAware
 
 /// <summary>
 /// A write-only register window that MAME maps as <c>nopw</c>: writes are accepted and counted, reads are NOT IMPLEMENTED
-/// (MAME has no read handler there; the game never reads these addresses in the 4000+ frames traced).
+/// (MAME has no read handler there; the game never read these addresses in 2 800 traced frames,
+/// reports/trace_a08/nopw_windows_summary.txt).
 /// </summary>
 public class NopWriteDevice : MmioDeviceBase
 {
@@ -116,7 +117,7 @@ public class NopWriteDevice : MmioDeviceBase
 
 /// <summary>
 /// 0x1f018000 - the watchdog kick register. MAME maps it as nopw (no watchdog device is instantiated for the main CPU), the boot
-/// ROM writes 16-bit 0 to it and the game writes it ~1 000 000 times in 2 500 frames (MAME 0.264 tap counts).
+/// ROM writes 16-bit 0 to it from frame 24 and 1 187 719 writes were counted in 2 800 frames (MAME 0.264 tap, always value 0).
 /// Each kick is observable through <see cref="Kicked"/>; an enforcing watchdog is NOT IMPLEMENTED because the reference has none.
 /// </summary>
 public sealed class WatchdogKickDevice : NopWriteDevice

@@ -13,7 +13,7 @@ Invoke-Script {
 
     Step 'locate dotnet test projects'
     $projects = @(foreach ($d in 'host', 'tests', 'src') {
-        if (Test-Path $d) { Get-ChildItem $d -Recurse -Filter '*.csproj' | Where-Object { $_.FullName -notmatch '[\\/](obj|bin)[\\/]' -and $_.FullName -match '(?i)test' } }
+        if (Test-Path $d) { Get-ChildItem $d -Recurse -Filter '*.csproj' | Where-Object { $_.FullName -notmatch '[\\/](obj|bin)[\\/]' -and $_.FullName.Substring($Repo.Length) -match '(?i)test' } }
     }) | Sort-Object FullName -Unique
     if ($projects.Count -eq 0) { Fail 'no dotnet test project found (expected host/TttHost.Tests)' }
     $projects | ForEach-Object { Write-Host "  $($_.FullName)" }

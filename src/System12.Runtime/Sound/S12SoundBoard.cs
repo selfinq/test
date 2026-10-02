@@ -92,7 +92,7 @@ public sealed class S12SoundBoard : IH83002Board
         if (state == _vblank) return;
         _vblank = state;
         Mcu.Intc.SetIrq(1, state);
-        if (state) { /* ADC external trigger: not modelled (ADCR trigger mode is software in this firmware, see docs) */ }
+        Mcu.Adc.Adtrg(state, Mcu.Cpu.States); // MAME: m_adc->adtrg_w(state); conversion starts on the falling edge (vblank end)
         _portB = (byte)((_portB & 0x7f) | (state ? 0x80 : 0));
     }
 

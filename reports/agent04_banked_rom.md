@@ -2,7 +2,7 @@
 
 Status: implemented (C# + Python twin), validated against MAME 0.264 (Ubuntu build, same binary as the rest of the project)
 with 1099 forced bus/DMA operations (0 mismatches) and with the recorded bus traffic of the real game
-(__EV_SUMMARY__).
+(boot + 20000 frames of game traffic: 905,900 bus events, 70,627 ROM->RAM DMAs, 378,449 predicted read values all equal).
 No ROM data is stored in the repo by this work; all ROM-derived inputs are read from `generated/regions/*.bin` (user supplied) and every
 test that needs them skips when they are absent.
 
@@ -63,8 +63,7 @@ that is **main-ROM** DMA through `dmaoffset` bit 31 (111 transfers in the first 
 * `src/System12.Runtime/Banked/PsxDmaChannel5.cs` - channel 5 / DPCR / DICR wrapper exactly as `psxdma_device` drives the ROM handler.
 * `tests/py_banked/bankrom_ref.py` (Python twin), `test_banked.py` (41 unittest cases), `compare_trace.py` (trace replay), `forced_ops.py`
   (forced-op generator/comparer), `cs_harness/` (C# cross-check: `sh tests/py_banked/cs_harness/run_cs_crosscheck.sh`, builds a throw-away project in `$TMPDIR`).
-* `reports/trace_a04/`: `ev.lua` (event tracer), `ft.lua` + `ft_ops.lua` + `ft_result.txt` (forced test + MAME's answers), `run1500/`, `run8k/`,
-  `run20k/` (event logs, DMA dumps, compare output), `probe2.lua`/`probe3.lua` (+logs: tap-GC evidence), `run_all.sh` (reproduces everything), `nvram_seed/`
+* `reports/trace_a04/`: `ev.lua` (event tracer), `ft.lua` + `ft_ops.lua` + `ft_result.txt` (forced test + MAME's answers), `run1500/` (plain log, used by the unit test), `run8k/`, `run20k/`, `run8k_seq305020/` (gzipped event logs, first DMA dumps, compare output), `probe2.lua`/`probe3.lua` (+logs: tap-GC evidence), `run_all.sh` (reproduces everything), `nvram_seed/`
   (pristine copy of /tmp/nv2/tektagt used as the starting NVRAM for all runs).
 * Run unit tests: `python3 -m unittest discover -s tests/py_banked -v`.
 
@@ -88,12 +87,25 @@ This only covers the bus/DMA behaviour as seen through MAME's address-space API,
 ### 4.2 Real game traffic
 `ev.lua` taps the bank/DMA-offset/protection windows and the DMA channel-5 registers, replays each event through the model (read values are predictions, DMA results are
 checked by hashing 256-word blocks of RAM at the next bus event, and byte-exactly for the first dumped transfers).
-__RESULT_TABLE__
+| Run (same NVRAM seed, deterministic) | frames | bus events | predicted reads (all equal) | DMAs (flag / `dmaoffset` main ROM / `dmaoffset` banked) | 256-word RAM blocks equal / different |
+|---|---|---|---|---|---|
+| `run1500` | 1500 | 88,818 | 39,146 (0 wrong) | 7,939 (7,828 / 111 / 0) | 13,135 / 11 |
+| `run8k` | 8000 | 304,738 | 126,697 (0 wrong) | 24,164 | 52,237 / 11 |
+| `run20k` | 20000 | 905,900 | 378,449 (0 wrong) | 70,627 (69,929 / 698 / 0), 25.2 M words copied, banked source offsets 0 .. 0x32b5054 (53.2 MB of the 58.7 MB region) | 143,704 / 14 |
 
-The 11 non-identical DMA hash blocks are all the same early transfers (sequence numbers 65, 75, 85, 95, 171, 203, 521, 531, 651, 661, 803) and are **not** model errors:
+Details: no write/read of 0x1f000000 and bank entry always 0; the periodic protection exchange only ever presents the four known pairs (8000-frame run: one boot-time exchange each for
+806d2c24/d5545715, 804c2c84/d5545615, 2aaba8e6/00820040, then 3598 x 2aaba592/01780544), always answered as the model predicts; the 0xa9 branch is never used by the game (only by the forced test).
+The game uses no byte accesses to these windows and no banked-ROM DMA through `dmaoffset` (only through the tektagt flag); `dmaoffset` DMAs are all main-ROM (bit 31).
+
+The 11 non-identical DMA hash blocks that appear in every run are the same early main-ROM transfers (sequence numbers 65, 75, 85, 95, 171, 203, 521, 531, 651, 661, 803) and are, with high confidence, **not** model errors:
 the byte dumps (`run1500/dma_dump_*.bin`) differ from the model in exactly every second word, each by the same constant `0x04000000 + source_offset - 4` (the game
 CPU relocates a pointer table in place right after the DMA, before the next bus event I look at). `compare_trace.py` classifies these automatically
-(`dump_fixup_explained`); after that there are 0 unexplained differences.
+(`dump_fixup_explained`). All 11 were verified from byte dumps (`run1500/`).
+
+**One remaining difference I cannot fully explain** (appears first in the 20k run, frame 8015): DMA seq 305020 (main ROM offset 0x21b36c via `dmaoffset`, 1300 words to 0x3988a8). Byte dump
+(`run8k_seq305020/dma_dump_13.bin`): 1296 of 1300 words are identical to the model, 4 words differ: index 3 (0 -> 0x00300200), 134 (0x10 -> 0x02800210), 651 (0 -> 0x00300200),
+782 (0x00400010 -> 0x02c00210). These look like OR-ed flag/pointer fields patched by the game CPU after the transfer (a DMA-engine error would not produce four isolated words),
+but I could not prove it: my attempt to catch the CPU stores with debugger watchpoints produced no output (inconclusive, discarded). Treat it as "very likely CPU post-patching, unproven".
 
 ### 4.3 Mismatches / surprises found while validating (honest list)
 1. Driver `mirror(0x800000)` of the protection-3 read is not effective in MAME 0.264 (boot ROM shadows 0x1ff00000): model does not mirror (my first model did, and the forced test caught it).
@@ -107,7 +119,7 @@ CPU relocates a pointer table in place right after the DMA, before the next bus 
 * No CPU-instruction-level or recompiled-code validation (this component has no recompiled caller yet).
 * Alt-bank boards (`AltBank`, `bankoffset`) and `exp_base==0x1f300000` games are modelled from the driver and exercised only by the forced test, not by real game traffic.
 * The post-DMA RAM check happens at the next bus event, so code that rewrites the destination immediately (the 11 relocated tables) shows up as a difference; I verified those separately.
-* "Attract mode" itself was not independently confirmed; the runs cover boot + the first __FRAMES__ frames of game execution (game starts running from RAM at frame ~367).
-* Concerns for the recompiler: 24k+ transfers write into RAM ranges `0x2fe500..0x3a5370` and `0x3dfaf8..0x3fffc8`; `0x2fe500..0x3a8350` lies inside the decompressed boot image
+* "Attract mode" itself was not independently confirmed; the runs cover boot + the first 20000 frames of game execution (game starts running from RAM at frame ~367).
+* Concerns for the recompiler: 70k transfers (24k in the first 8000 frames) write into RAM ranges `0x2fe500..0x3a5370` and `0x3dfaf8..0x3fffc8`; `0x2fe500..0x3a8350` lies inside the decompressed boot image
   (`ttt_image.bin`, all 70 transfers that fall fully inside differ from the image bytes). 63 of the 3418 function entries found by the raw-image recompiler
   (`generated/recomp/main.cs`, e.g. 0x300000, 0x300104, 0x300238) are inside ranges that are overwritten by DMA at run time: check whether those are really code.

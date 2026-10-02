@@ -71,7 +71,8 @@ def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, 
              event_max=None):
     """Convert a raw capture directory into the snapshot JSON (+ events sidecar). Pure function of the raw
     directory contents, so it is unit-testable without MAME."""
-    manifest = json.load(open(os.path.join(raw_dir, "manifest.json")))
+    with open(os.path.join(raw_dir, "manifest.json")) as f:
+        manifest = json.load(f)
     base = sl.parse_int(regions_cfg["ram_base"])
     ev_path = out_path[:-5] + ".events.jsonl" if out_path.endswith(".json") else out_path + ".events.jsonl"
     log = os.path.join(raw_dir, "debug.log")
@@ -85,9 +86,11 @@ def finalize(raw_dir, out_path, regions_cfg, capture_info, producer_extra=None, 
     chains = sl.EventChains()
     pos = 0
     cps = []
-    for ln in open(os.path.join(raw_dir, "checkpoints.jsonl")):
-        raw = json.loads(ln)
-        ram = open(os.path.join(raw_dir, raw["ram_file"]), "rb").read()
+    with open(os.path.join(raw_dir, "checkpoints.jsonl")) as f:
+        raw_cps = [json.loads(ln) for ln in f if ln.strip()]
+    for raw in raw_cps:
+        with open(os.path.join(raw_dir, raw["ram_file"]), "rb") as f:
+            ram = f.read()
         if len(ram) != regions_cfg["ram_size"]:
             raise ValueError("ram dump size %d != %d" % (len(ram), regions_cfg["ram_size"]))
         sp = sl.parse_int(raw["gpr"][sl.GPR_NAMES.index("sp")])
@@ -177,15 +180,19 @@ def main(argv=None):
         cmd += ["-debug", "-debugger", "none", "-debuglog"]
     os.makedirs(os.path.join(work, "home"), exist_ok=True)
     p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=a.timeout, cwd=raw)   # debug.log lands in cwd
-    open(os.path.join(work, "mame.stderr.txt"), "w").write(p.stderr)
-    open(os.path.join(work, "mame.stdout.txt"), "w").write(p.stdout)
+    with open(os.path.join(work, "mame.stderr.txt"), "w") as f:
+        f.write(p.stderr)
+    with open(os.path.join(work, "mame.stdout.txt"), "w") as f:
+        f.write(p.stdout)
     if not os.path.exists(os.path.join(raw, "done.txt")):
         sys.exit("MAME run did not complete (rc=%s); see %s/mame.stderr.txt" % (p.returncode, work))
-    manifest = json.load(open(os.path.join(raw, "manifest.json")))
+    with open(os.path.join(raw, "manifest.json")) as f:
+        manifest = json.load(f)
     if use_dbg and not manifest["debugger"]:
         sys.exit("pc checkpoints/events requested but the MAME debugger interface is unavailable")
     nv = os.path.join(work, "nvram", "tektagt", "at28c16")
-    seed_sha = open(os.path.join(a.seed_dir, "SEED.sha256")).read().split()[0]
+    with open(os.path.join(a.seed_dir, "SEED.sha256")) as f:
+        seed_sha = f.read().split()[0]
     capture_info = {"frames": a.frames, "every": a.every, "pcs": [s for s in a.pcs.split(",") if s],
                     "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads)}
     meta = {"nvram_after_run_sha256": file_sha256(nv) if os.path.exists(nv) else None,
