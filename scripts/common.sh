@@ -12,6 +12,7 @@ source "$_COMMON_DIR/pins.cfg"
 # Overridable locations (environment variables).
 ROM_ZIP="${ROM_ZIP:-$REPO/input/roms/tektagt.zip}"
 RECOMPONE_DIR="${RECOMPONE_DIR:-$REPO/../work/recompone}"
+RECOMP_OUT_USER="${RECOMP_OUT:-}"   # empty when the user did not set it
 RECOMP_OUT="${RECOMP_OUT:-$REPO/generated/recomp}"
 HOST_PROJECT="$REPO/host/TttHost/TttHost.csproj"
 RUNTIME_PROJECT="$REPO/src/System12.Runtime/System12.Runtime.csproj"

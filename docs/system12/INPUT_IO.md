@@ -64,6 +64,18 @@ H8 view (add `0x1f080000 - 0x80000` for the main bus; main sees only the first 1
 Measured credit sequence (attract, seeded NVRAM): coin1 held 6 frames -> `0x83900=1` (about 3 frames after release); coin2 -> `0x83902=1`; coin1 held **1 frame** -> `0x83900=2`;
 the title screen showed `CREDITS 3`; 1P START (held 6 frames) -> main writes `0x83940=1`, `0x83900=1`; character select followed. Free play / coins-per-credit handling lives in the game and is not modelled.
 
+### 1.3 End-to-end check with the real firmware (local, needs the user's ROM-derived regions)
+
+`reports/trace_a08/e2e_harness_Program.cs.txt` (+ `e2e_harness_output.txt`): `HostInputMapper` -> `JammaPort` -> `S12SoundBoard.In0/In1/Dsw` (the sound agent's H8/3002 core running the unmodified `sub.bin`) -> shared RAM -> `SharedRamInputMonitor`.
+The harness replays the 588 main-CPU shared-RAM writes recorded from MAME frames 0..700 (`main_shared_writes_boot.txt`) because the firmware only accepts coins after the main CPU has configured it
+(without the replay: P1/P2 words and TEST worked, coins stayed 0). Result, all matching what MAME showed:
+
+* COIN1 held 6 frames -> `0x83900 = 1` (event `coin_accepted` slot 0); COIN2 tapped 1 frame (mapper stretches to 2) -> `0x83902 = 1`.
+* Main writes `1` to `0x83940` -> the firmware lowers `0x83900` to 0 and zeroes `0x83940` (event `coins_consumed`); `0x83902` untouched.
+* P1 START+UP+BTN1 -> `0x83140 = 0xa200` (= `SharedRamPlayerWord.Encode`), TEST -> `0x83380 = 0x8000`, both released -> 0.
+
+This is the strongest available evidence that the LLE path is functionally right; it is **not** a game run (no main CPU) and does not exercise the game's own use of these words.
+
 ## 2. Host input mapper (`HostInputMapper`, `DefaultBindings`, `BindingTable`)
 
 Plain data, no UI library. A source is a string: `Key:<name>`, `Pad<n>:<button>` or `Pad<n>:<axis>-` / `+` (axes via `SetAxis`, dead zone 0.5). Multiple sources may drive one arcade input.
@@ -173,7 +185,7 @@ With a recompiled build, the same input script (coin at 2600, START at 2700, in 
 * Wiring is the integrator's job but trivial: `S12SoundBoard` (sound agent) already exposes `In0`, `In1`, `Dsw` and `SharedRam`, so once per frame:
   `board.In0 = port.ReadWord(0); board.In1 = port.ReadWord(1); board.Dsw = port.Dsw; port.State = mapper.Sample();` and
   `monitor = new SharedRamInputMonitor(SharedRamInputMonitor.BigEndianReader(board.SharedRam), outputs); monitor.Poll(frame);`.
-  This end-to-end path (mapper -> JammaPort -> real H8 firmware -> shared RAM -> monitor) was **not run** here because it needs the H8 ROM.
+  This exact path was run locally against the real firmware, see 1.3.
 
 ## 8. Running the tests
 

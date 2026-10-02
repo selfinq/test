@@ -42,6 +42,7 @@ for _, r in ipairs(ranges) do
 end
 print(string.format("pc_capture: %d breakpoints set in %.1fs (mode=%s)", count, os.clock() - tstart, mode))
 
+local frame = 0
 local function write_result(final)
   local live = {}   -- index -> true for still-armed breakpoints
   for i, bp in pairs(dbg:bplist()) do
@@ -56,12 +57,11 @@ local function write_result(final)
   for _, a in ipairs(hit) do f:write(string.format("%08x\n", a)) end
   f:close()
   os.rename(out_path .. ".tmp", out_path)
-  print(string.format("pc_capture: %s %d/%d candidate PCs executed -> %s", final and "FINAL" or "partial", #hit, count, out_path))
+  print(string.format("pc_capture: %s frame=%d cpu=%.1fs %d/%d candidate PCs executed -> %s", final and "FINAL" or "partial", frame, os.clock() - tstart, #hit, count, out_path))
 end
 
 local input_fn
 if os.getenv("PCC_INPUT") then input_fn = dofile(os.getenv("PCC_INPUT")) end
-local frame = 0
 emu.register_frame_done(function()
   frame = frame + 1
   if input_fn then input_fn(frame) end

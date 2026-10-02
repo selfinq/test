@@ -45,6 +45,11 @@ def snapshot_hash(snap):
     return sha256_hex(canonical_json(d).encode())
 
 
+def checkpoint_hash(cp):
+    """sha256 of the canonical JSON of one checkpoint (used to show per checkpoint determinism)."""
+    return sha256_hex(canonical_json(cp).encode())
+
+
 # ------------------------------------------------------------------ regions
 
 def load_regions_config(path):

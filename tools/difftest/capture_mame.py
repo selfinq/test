@@ -145,6 +145,8 @@ def main(argv=None):
     ap.add_argument("--pcs", default="80010000:1",
                     help="instruction-exact checkpoints 'addr:nth[,addr:nth]' (needs -debug -debugger none); '' = none")
     ap.add_argument("--reads", action="store_true", help="also watch reads of EEPROM/protection/I_MASK (MAME ~10x slower)")
+    ap.add_argument("--empty-nvram", action="store_true",
+                    help="EXPERIMENT ONLY: delete the restored NVRAM so MAME boots with an empty EEPROM (shows seed sensitivity)")
     ap.add_argument("--no-events", action="store_true", help="do not record I/O + DMA events")
     ap.add_argument("--event-max", type=int, default=5000000, help="keep at most this many events (rest dropped, flagged truncated)")
     ap.add_argument("--workdir", help="work directory (default: temp dir, removed unless --keep-raw)")
@@ -162,6 +164,8 @@ def main(argv=None):
     r = subprocess.run([os.path.join(HERE, "restore_nvram.sh"), work, a.seed_dir], capture_output=True, text=True)
     if r.returncode:
         sys.exit("restore_nvram failed: " + r.stderr)
+    if a.empty_nvram:
+        os.unlink(os.path.join(work, "nvram", "tektagt", "at28c16"))
     raw = os.path.join(work, "raw")
     shutil.rmtree(raw, ignore_errors=True)
     os.makedirs(raw)
@@ -194,7 +198,7 @@ def main(argv=None):
     with open(os.path.join(a.seed_dir, "SEED.sha256")) as f:
         seed_sha = f.read().split()[0]
     capture_info = {"frames": a.frames, "every": a.every, "pcs": [s for s in a.pcs.split(",") if s],
-                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads)}
+                    "nvram_seed_sha256": seed_sha, "event_max": a.event_max, "reads_watched": bool(a.reads), "empty_nvram": bool(a.empty_nvram)}
     meta = {"nvram_after_run_sha256": file_sha256(nv) if os.path.exists(nv) else None,
             "mame_binary": a.mame, "mame_binary_sha256": file_sha256(a.mame), "mame_rc": p.returncode}
     snap = finalize(raw, a.out, regions_cfg, capture_info, meta_extra=meta, keep_raw=a.keep_raw, event_max=a.event_max)

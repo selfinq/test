@@ -24,6 +24,7 @@ function Get-EnvOr([string]$Name, [string]$Default) {
 
 $global:RomZip        = [IO.Path]::GetFullPath((Get-EnvOr 'ROM_ZIP' (Join-Path $Repo 'input/roms/tektagt.zip')))
 $global:RecomponeDir  = [IO.Path]::GetFullPath((Get-EnvOr 'RECOMPONE_DIR' (Join-Path $Repo '../work/recompone')))
+$global:RecompOutUser = Get-EnvOr 'RECOMP_OUT' ''   # empty when the user did not set it
 $global:RecompOut     = [IO.Path]::GetFullPath((Get-EnvOr 'RECOMP_OUT' (Join-Path $Repo 'generated/recomp')))
 $global:HostProject   = Join-Path $Repo 'host/TttHost/TttHost.csproj'
 $global:RuntimeProject = Join-Path $Repo 'src/System12.Runtime/System12.Runtime.csproj'
