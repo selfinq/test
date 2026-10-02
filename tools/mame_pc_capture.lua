@@ -33,7 +33,9 @@ local count = 0
 local tstart = os.clock()
 for _, r in ipairs(ranges) do
   for a = r[1], r[2] - 4, 4 do
-    local i = dbg:bpset(a, "", string.format("%s%x;go", verb, nxt))  -- NB: debugger numbers are HEX
+    -- NB: debugger numbers are HEX and a bare token such as "e0" or "a1" is looked up as a SYMBOL first (the visible
+    -- CPU is the H8 sub-CPU, whose registers are e0..e7; main CPU has a0..a3, bda, bfc, bada). Always use "0x".
+    local i = dbg:bpset(a, "", string.format("%s0x%x;go", verb, nxt))
     if i ~= nxt then error(string.format("bp index mismatch: got %d expected %d", i, nxt)) end
     addr_of[i] = a
     nxt = nxt + 1
