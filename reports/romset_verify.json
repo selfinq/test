@@ -1,0 +1,24 @@
+{
+  "ok": [
+    "flel.ic4",
+    "fleu.ic5",
+    "flol.ic6",
+    "flou.ic7",
+    "teg1.11s",
+    "teg1_rom0e.ic9",
+    "teg1_rom0o.ic13",
+    "teg1_rom1e.ic10",
+    "teg1_rom1o.ic14",
+    "teg1_rom2e.ic11",
+    "teg1_rom2o.ic15",
+    "teg1_wave0.ic1",
+    "teg1_wave1.ic12",
+    "teg2verc1.2e",
+    "teg2verc1.2j"
+  ],
+  "wrong_name": [],
+  "bad_content": [],
+  "missing": [],
+  "unknown": [],
+  "complete": true
+}

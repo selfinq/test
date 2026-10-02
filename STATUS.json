@@ -12,8 +12,8 @@
       "note": "Base RecompOne builds. ROM verifier and region builder (tools/build_regions.py) pass 14 synthetic tests. The recompiler-side System 12 importer is NOT written, so H0 is not met."
     },
     "H1": {
-      "status": "BLOCKED",
-      "note": "input/roms/tektagt.zip absent; see MISSING_INPUTS.md"
+      "status": "PASS",
+      "note": "input/roms/tektagt.zip (sha256 7bba566f...b18a0, assembled from two uploaded parts) verified: tools/verify_romset.py 15/15 by content (rc 0); mame 0.264 -verifyroms tektagt: 'romset tektagt is good' (rc 0); build_regions.py produced 4 regions with full coverage. Evidence: reports/romset_verify.json, reports/mame_ref/verifyroms_real.txt"
     },
     "H2": {
       "status": "BLOCKED",
@@ -38,8 +38,8 @@
   },
   "not_run": [
     "any recompilation",
-    "any differential test",
-    "mame -verifyroms with real ROMs (ran with empty rompath: rc=2, 'romset tektagt not found')"
+    "any differential test against MAME execution",
+    "build_regions LOAD32_WORD in-word byte order vs MAME on real data (only structurally validated)"
   ],
   "phase2_mame": "PASS (partial): -listxml rc=0, -listroms rc=0; manifest identical to MAME 0.264 listroms (15/15). See reports/mame_ref/"
 }
