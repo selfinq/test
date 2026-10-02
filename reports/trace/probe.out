@@ -1,0 +1,6 @@
+cpu	cxd8661r	:maincpu
+space	program
+state:	!Context !EntryHi !EntryLo !Index !Random BDA BDAM BPC BPCM BadA CURPC Cause DCIC EPC GENPC PRId SR TAR a0 a1 a2 a3 at bbk bfc biu delayr delayv dqa dqb flag fp gbk gfc gp h hi ir0 ir1 ir2 ir3 irgb k0 k1 l11l12 l13l21 l22l23 l31l32 l33 lb1lb2 lb3 lg2lg3 lo lr1lr2 lr31g1 lzcr lzcs mac0 mac1 mac2 mac3 ofx ofy orgb otz pc r11r12 r13r21 r22r23 r31r32 r33 ra rbk res1 rfc rgb rgb0 rgb1 rgb2 s0 s1 s2 s3 s4 s5 s6 s7 sp sxy0 sxy1 sxy2 sxyp sz0 sz1 sz2 sz3 t0 t1 t2 t3 t4 t5 t6 t7 t8 t9 trx try trz v0 v1 vxy0 vxy1 vxy2 vz0 vz1 vz2 zero zsf3 zsf4
+Ignoring MAME exception: Error running autoboot script probe.lua: runtime error
+probe.lua:9: attempt to index a nil value (field 'PC')
+

@@ -24,3 +24,9 @@ Boot flow, entry address, byte order and bank mapping must come from the driver 
 `-listxml tektagt` / `-listroms tektagt` / `-verifyroms` outputs and return codes are in reports/mame_ref/ (rc 0/0/2; the 2 is the expected 'romset not found' with an empty rompath).
 -listroms matches tools/tektagt_manifest.json exactly (15/15 size+CRC+SHA-1), so 0.264 and the pinned master source agree for this set.
 Devices per -listxml: main CPU Sony CXD8661R @100 MHz, sound CPU Hitachi H8/3002 @16.9344 MHz, Namco C352 @25.4016 MHz.
+
+## Boot analysis (MAME 0.264 Lua traces in reports/trace/*.lua, logs *.txt; dumps stay local)
+- Reset at 0xbfc00000, boot code executes from ROM. Frames ~119-366: decompressor at 0x1fc21048 (called from 0x1fc20e90, args from ROM words 0x1fc24010/0x1fc24014)
+  writes the game image to 0x80010000 (nonzero RAM grows ~8 KB/frame). At frame 367 PC first lands in RAM; entry word @0x1fc2401c = 0x80010000.
+- Bank register 0x1f000000 and protection windows 0x1fb00000..0x1fb80003: 0 write-tap hits in 4000 frames (taps do not see direct-RAM writes, so RAM-write taps are not evidence).
+- Banked ROM data is read later via other paths (RAM blocks from bankedroms seen near 0x3eff54, 0x3f3a70) - mechanism NOT yet identified.

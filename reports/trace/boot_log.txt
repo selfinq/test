@@ -1,0 +1,23 @@
+reset pc=bfc00000
+frame 1 pc=1fc20b84
+frame 2 pc=1fc20b8c
+frame 3 pc=1fc20b94
+frame 4 pc=1fc20b84
+frame 61 pc=1fc2102c
+dumped ram at frame 120
+frame 121 pc=bfc028d0
+frame 181 pc=bfc028d0
+frame 241 pc=bfc028d0
+frame 301 pc=bfc028d0
+frame 361 pc=bfc028cc
+dumped ram at frame 400
+frame 421 pc=bfc028d0
+frame 481 pc=bfc028d0
+frame 541 pc=bfc028d0
+frame 601 pc=bfc028d0
+frame 661 pc=bfc028d0
+frame 721 pc=bfc028d0
+frame 781 pc=bfc028cc
+frame 841 pc=bfc028cc
+dumped ram at frame 900
+bankwrites total 0

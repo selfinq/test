@@ -1,0 +1,10 @@
+{
+ "image_sha256": "c1d796ff3f42fd0f7866d3d449f5692b814827870f035f8a265947f529d21c7f",
+ "mame_ram_sha256": "c1d796ff3f42fd0f7866d3d449f5692b814827870f035f8a265947f529d21c7f",
+ "image_size": 3769168,
+ "load_address": "0x80010000",
+ "entry": "0x80010000",
+ "source_rom_offset": "0x28000",
+ "source_bytes_consumed": "0xf88f5",
+ "evidence": "main ROM words @0x24010/0x24014 (src/dst), jr via word @0x2401c; MAME 0.264 RAM at first frame with PC in RAM (frame 367) == decompressed image, 100% byte-identical"
+}

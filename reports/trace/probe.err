@@ -1,0 +1,5 @@
+Warning: -video none doesn't make much sense without -seconds_to_run
+ALSA lib seq_hw.c:528:(snd_seq_hw_open) open /dev/snd/seq failed: No such file or directory
+Fatal error: Error running autoboot script probe.lua: runtime error
+probe.lua:9: attempt to index a nil value (field 'PC')
+
