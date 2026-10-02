@@ -6,13 +6,38 @@
   },
   "phase1_audit": "PASS: base tool built (0 errors, 2 pre-existing warnings); see reports/PHASE1_AUDIT.md",
   "milestones": {
-    "H0": {"status": "FAIL", "note": "Base RecompOne builds. Verifier + manifest tested synthetically (7 tests). System 12 importer NOT written, so H0 is not met."},
-    "H1": {"status": "BLOCKED", "note": "input/roms/tektagt.zip absent; see MISSING_INPUTS.md"},
-    "H2": {"status": "BLOCKED", "note": "needs ROMs"},
-    "H3": {"status": "BLOCKED", "note": "needs ROMs"},
-    "H4": {"status": "BLOCKED", "note": "needs ROMs"},
-    "H5": {"status": "BLOCKED", "note": "needs ROMs"},
-    "H6": {"status": "BLOCKED", "note": "needs ROMs"}
+    "H0": {
+      "status": "FAIL",
+      "note": "Base RecompOne builds. ROM verifier and region builder (tools/build_regions.py) pass 14 synthetic tests. The recompiler-side System 12 importer is NOT written, so H0 is not met."
+    },
+    "H1": {
+      "status": "BLOCKED",
+      "note": "input/roms/tektagt.zip absent; see MISSING_INPUTS.md"
+    },
+    "H2": {
+      "status": "BLOCKED",
+      "note": "needs ROMs"
+    },
+    "H3": {
+      "status": "BLOCKED",
+      "note": "needs ROMs"
+    },
+    "H4": {
+      "status": "BLOCKED",
+      "note": "needs ROMs"
+    },
+    "H5": {
+      "status": "BLOCKED",
+      "note": "needs ROMs"
+    },
+    "H6": {
+      "status": "BLOCKED",
+      "note": "needs ROMs"
+    }
   },
-  "not_run": ["mame -listxml/-listroms/-verifyroms tektagt (MAME not installed; apt offers 0.264, which must be compared against the pinned source commit)", "any recompilation", "any differential test"]
+  "not_run": [
+    "mame -listxml/-listroms/-verifyroms tektagt (MAME not installed; apt offers 0.264, which must be compared against the pinned source commit)",
+    "any recompilation",
+    "any differential test"
+  ]
 }
