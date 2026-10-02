@@ -1,0 +1,14 @@
+# Game data and anything derived from it must never be committed
+input/
+generated/
+*.zip
+*.rom
+*.bin
+*.trace
+*.dump
+reports/refs/
+reports/traces/
+bin/
+obj/
+__pycache__/
+*.pyc

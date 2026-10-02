@@ -1,0 +1,22 @@
+{
+  "set": "tektagt",
+  "description": "Tekken Tag Tournament (World, TEG2/VER.C1, set 1) - Namco System 12",
+  "source": "mame src/mame/namco/namcos12.cpp ROM_START(tektagt), mame commit f8f6b22c3f328b9e0b04ff502989f8536c0d66c0",
+  "members": [
+    {"name":"teg2verc1.2e","region":"maincpu:rom","role":"program","size":2097152,"crc32":"c6da0717","sha1":"9e01ae64710d85eb9899d6fa6fd0a2152aee8c11","load":"LOAD16_BYTE @0x0000000"},
+    {"name":"teg2verc1.2j","region":"maincpu:rom","role":"program","size":2097152,"crc32":"25a1d2ff","sha1":"529a11a1bbb8655534d7ec371f1c09e9e387ed11","load":"LOAD16_BYTE @0x0000001"},
+    {"name":"teg1_rom0e.ic9","region":"bankedroms","role":"data","size":8388608,"crc32":"c962a373","sha1":"d662dbd89ef62c5ac3150a018fc2d35ef2ee94ac","load":"LOAD32_WORD @0x0000000"},
+    {"name":"teg1_rom0o.ic13","region":"bankedroms","role":"data","size":8388608,"crc32":"badb7dcf","sha1":"8c0bf7f6351c5a2a0996df371a901cf90c68cd8c","load":"LOAD32_WORD @0x0000002"},
+    {"name":"teg1_rom1e.ic10","region":"bankedroms","role":"data","size":8388608,"crc32":"b3d56124","sha1":"4df20c74ba63f7362caf15e9b8949fab655704fb","load":"LOAD32_WORD @0x1000000"},
+    {"name":"teg1_rom1o.ic14","region":"bankedroms","role":"data","size":8388608,"crc32":"2434ceb6","sha1":"f19f1599acbd6fd48793a2ee5a500ca817d9df56","load":"LOAD32_WORD @0x1000002"},
+    {"name":"teg1_rom2e.ic11","region":"bankedroms","role":"data","size":8388608,"crc32":"6e5c3428","sha1":"e3cdb60a4445406877b2e273385f34bfb0974220","load":"LOAD32_WORD @0x2000000"},
+    {"name":"teg1_rom2o.ic15","region":"bankedroms","role":"data","size":8388608,"crc32":"21ce9dfa","sha1":"f27e8210ee236c327aa3e1ce4dd408abc6580a1b","load":"LOAD32_WORD @0x2000002"},
+    {"name":"flel.ic4","region":"bankedroms","role":"data(flash)","size":2097152,"crc32":"88b3823c","sha1":"6f31acb642c57daccbfdb87b790037e261c8c73c","load":"LOAD32_BYTE @0x3000000"},
+    {"name":"fleu.ic5","region":"bankedroms","role":"data(flash)","size":2097152,"crc32":"36df0867","sha1":"6bec8560ad4c122dc909daa83aa9089ba5b281f7","load":"LOAD32_BYTE @0x3000001"},
+    {"name":"flol.ic6","region":"bankedroms","role":"data(flash)","size":2097152,"crc32":"03a76765","sha1":"ae35ae28375f2a3e52d72b77ec09750c326cc269","load":"LOAD32_BYTE @0x3000002"},
+    {"name":"flou.ic7","region":"bankedroms","role":"data(flash)","size":2097152,"crc32":"6d6947d1","sha1":"2f307bc4070fadb510c0473bc91d917b2d845ca5","load":"LOAD32_BYTE @0x3000003"},
+    {"name":"teg1.11s","region":"sub","role":"sound-program(H8/3002)","size":524288,"crc32":"67d0c469","sha1":"da164702fc21b9f46a9e32c89e7b1d36070ddf79","load":"LOAD16_WORD_SWAP @0x0000000"},
+    {"name":"teg1_wave0.ic1","region":"c352","role":"samples","size":8388608,"crc32":"4bd99104","sha1":"f76b0576cc28fe49d3c1c402988b933933e52e15","load":"LOAD @0x0000000"},
+    {"name":"teg1_wave1.ic12","region":"c352","role":"samples","size":8388608,"crc32":"dbc74fff","sha1":"601b7e7361ea744b34e3fa1fc39d88641de7f4c6","load":"LOAD @0x0800000"}
+  ]
+}

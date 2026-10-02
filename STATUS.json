@@ -1,0 +1,18 @@
+{
+  "pins": {
+    "recompone": "8d0091cf4877b27c2d526106a78c75f6b0ef97b2",
+    "mame_reference_source": "f8f6b22c3f328b9e0b04ff502989f8536c0d66c0",
+    "dotnet_sdk": "10.0.112 (Ubuntu apt, dotnet-sdk-10.0)"
+  },
+  "phase1_audit": "PASS: base tool built (0 errors, 2 pre-existing warnings); see reports/PHASE1_AUDIT.md",
+  "milestones": {
+    "H0": {"status": "FAIL", "note": "Base RecompOne builds. Verifier + manifest tested synthetically (7 tests). System 12 importer NOT written, so H0 is not met."},
+    "H1": {"status": "BLOCKED", "note": "input/roms/tektagt.zip absent; see MISSING_INPUTS.md"},
+    "H2": {"status": "BLOCKED", "note": "needs ROMs"},
+    "H3": {"status": "BLOCKED", "note": "needs ROMs"},
+    "H4": {"status": "BLOCKED", "note": "needs ROMs"},
+    "H5": {"status": "BLOCKED", "note": "needs ROMs"},
+    "H6": {"status": "BLOCKED", "note": "needs ROMs"}
+  },
+  "not_run": ["mame -listxml/-listroms/-verifyroms tektagt (MAME not installed; apt offers 0.264, which must be compared against the pinned source commit)", "any recompilation", "any differential test"]
+}
